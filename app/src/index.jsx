@@ -65,8 +65,11 @@ async function run() {
 		urlParser.query.displayName || (cookiesManager.getUser() || {}).displayName;
 	const handlerName = urlParser.query.handlerName || urlParser.query.handler;
 	const forceTcp = urlParser.query.forceTcp === 'true';
-	const produce = urlParser.query.produce !== 'false';
-	const consume = urlParser.query.consume !== 'false';
+	const role = urlParser.query.role || 'viewer'; // yun
+//	const produce = urlParser.query.produce !== 'false';
+	const produce = role === 'broadcaster' && urlParser.query.produce !== 'false'; // yun
+//	const consume = urlParser.query.consume !== 'false';
+	const consume = true; // yun
 	const mic = urlParser.query.mic !== 'false';
 	const webcam =
 		urlParser.query.webcam === 'true'

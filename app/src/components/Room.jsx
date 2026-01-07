@@ -31,9 +31,11 @@ class Room extends React.Component {
 				? 'dev'
 				: room.mediasoupClientVersion;
 
+		const role = new URLSearchParams(window.location.search).get('role') || 'viewer'; // yun
+
 		return (
 			<Appear duration={300}>
-				<div data-component="Room">
+				<div data-component="Room" className={role === 'viewer' ? 'viewer' : 'broadcaster'}>
 					<Notifications />
 
 					<div className="state">
@@ -87,14 +89,14 @@ class Room extends React.Component {
 					</div>
 
 					<Peers />
-
+					
 					<div
 						className={classnames('me-container', {
 							'active-speaker': amActiveSpeaker,
 							speaking: amSpeakingPeer,
 						})}
 					>
-						<Me />
+						<Me /> // yun: 내 화면(좌측 하단 작게)
 					</div>
 
 					<div className="chat-input-container">

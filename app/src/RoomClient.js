@@ -8,6 +8,8 @@ import * as requestActions from './redux/requestActions';
 import * as stateActions from './redux/stateActions';
 import * as e2e from './e2e';
 
+const role = new URLSearchParams(window.location.search).get('role') || 'viewer'; // yun
+
 const VIDEO_CONSTRAINS = {
 	qvga: { width: { ideal: 320 }, height: { ideal: 240 } },
 	vga: { width: { ideal: 640 }, height: { ideal: 480 } },
@@ -94,11 +96,11 @@ export default class RoomClient {
 
 		// Whether we want to produce audio/video.
 		// @type {Boolean}
-		this._produce = produce;
+		this._produce = (role === 'broadcaster') && produce; // yun
 
 		// Whether we should consume.
 		// @type {Boolean}
-		this._consume = consume;
+		this._consume = true; // yun
 
 		// Whether we should enable mic by default.
 		// @type {Boolean}
@@ -880,6 +882,8 @@ export default class RoomClient {
 	}
 
 	async enableMic() {
+		if (!this._produce) return; // yun
+
 		logger.debug('enableMic()');
 
 		if (this._micProducer) return;
@@ -899,7 +903,7 @@ export default class RoomClient {
 				const stream = await navigator.mediaDevices.getUserMedia({
 					audio: true,
 				});
-
+			
 				track = stream.getAudioTracks()[0];
 			} else {
 				const stream = await this._getExternalVideoStream();
@@ -1026,6 +1030,8 @@ export default class RoomClient {
 	}
 
 	async enableWebcam() {
+		if (!this._produce) return; // yun
+		
 		logger.debug('enableWebcam()');
 
 		if (this._webcamProducer) {
@@ -1062,7 +1068,7 @@ export default class RoomClient {
 						...VIDEO_CONSTRAINS[resolution],
 					},
 				});
-
+			
 				track = stream.getVideoTracks()[0];
 			} else {
 				device = { label: 'external video' };
@@ -1241,6 +1247,8 @@ export default class RoomClient {
 	}
 
 	async changeWebcam() {
+		if (!this._produce) return; // yun
+
 		logger.debug('changeWebcam()');
 
 		store.dispatch(stateActions.setWebcamInProgress(true));
@@ -1305,6 +1313,8 @@ export default class RoomClient {
 	}
 
 	async changeWebcamResolution() {
+		if (!this._produce) return;
+
 		logger.debug('changeWebcamResolution()');
 
 		store.dispatch(stateActions.setWebcamInProgress(true));
@@ -1355,6 +1365,8 @@ export default class RoomClient {
 	}
 
 	async enableShare() {
+		if (!this._produce) return; // yun
+
 		logger.debug('enableShare()');
 
 		if (this._shareProducer) return;
@@ -2180,16 +2192,14 @@ export default class RoomClient {
 			//
 			// Just get access to the mic and DO NOT close the mic track for a while.
 			// Super hack!
-			{
-				const stream = await navigator.mediaDevices.getUserMedia({
-					audio: true,
-				});
-				const audioTrack = stream.getAudioTracks()[0];
+			const stream = await navigator.mediaDevices.getUserMedia({
+				audio: true,
+			});
+			const audioTrack = stream.getAudioTracks()[0];
 
-				audioTrack.enabled = false;
+			audioTrack.enabled = false;
 
-				setTimeout(() => audioTrack.stop(), 120000);
-			}
+			setTimeout(() => audioTrack.stop(), 120000);
 			// Create mediasoup Transport for sending (unless we don't want to produce).
 			if (this._produce) {
 				const transportInfo = await this._protoo.request(
