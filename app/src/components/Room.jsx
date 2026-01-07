@@ -89,19 +89,23 @@ class Room extends React.Component {
 					</div>
 
 					<Peers />
-					
-					<div
-						className={classnames('me-container', {
-							'active-speaker': amActiveSpeaker,
-							speaking: amSpeakingPeer,
-						})}
-					>
-						<Me /> // yun: 내 화면(좌측 하단 작게)
-					</div>
+				
+					{role === 'broadcaster' && ( // yun
+						<div
+							className={classnames('me-container', {
+								'active-speaker': amActiveSpeaker,
+								speaking: amSpeakingPeer,
+							})}
+						>
+							<Me /> // yun: 내 화면(좌측 하단 작게)
+						</div>
+					)}
 
-					<div className="chat-input-container">
-						<ChatInput />
-					</div>
+					{role === 'broadcaster' && ( // yun
+						<div className="chat-input-container">
+							<ChatInput />
+						</div>
+					)}
 
 					<div className="sidebar">
 						<div
