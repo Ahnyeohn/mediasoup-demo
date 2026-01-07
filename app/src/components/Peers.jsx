@@ -8,6 +8,27 @@ import Peer from './Peer';
 
 const role = new URLSearchParams(window.location.search).get('role') || 'viewer'; // yun
 
+const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => { // yun
+	const visiblePeers = role === 'viewer' ? peers.slice(0, 1) : peers;
+
+	return (
+		<div data-component="Peers">
+			{visiblePeers.map(peer => (
+				<Appear key={peer.id} duration={300}>
+					<div
+						className={classnames('peer-container', {
+							'active-speaker': peer.id === activeSpeakerId,
+							speaking: speakingPeerIds.includes(peer.id),
+						})}
+					>
+						<Peer id={peer.id} />
+					</div>
+				</Appear>
+			))}
+		</div>
+	);
+};
+
 //const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => {
 //	return (
 //		<div data-component="Peers">
@@ -28,27 +49,6 @@ const role = new URLSearchParams(window.location.search).get('role') || 'viewer'
 //		</div>
 //	);
 //};
-
-const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => {
-	const visiblePeers = role === 'viewer' ? peers.slice(0, 1) : peers;
-
-	return (
-		<div data-component="Peers">
-			{visiblePeers.map(peer => (
-				<Appear key={peer.id} duration={300}>
-					<div
-						className={classnames('peer-container', {
-							'active-speaker': peer.id === activeSpeakerId,
-							speaking: speakingPeerIds.includes(peer.id),
-						})}
-					>
-						<Peer id={peer.id} />
-					</div>
-				</Appear>
-			))}
-		</div>
-	);
-};
 
 Peers.propTypes = {
 	peers: PropTypes.arrayOf(appPropTypes.Peer).isRequired,
