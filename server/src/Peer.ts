@@ -471,7 +471,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 
 		const data = args[0];
 
-		this.#logger.debug('··> notification [name:%o]', name);
+		//this.#logger.debug('··> notification [name:%o]', name);
 
 		this.#protooPeer.notify(name, data).catch(error => {
 			this.#logger.warn(
