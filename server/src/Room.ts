@@ -110,6 +110,26 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	readonly #broadcasterPeers: Map<string, BroadcasterPeer> = new Map();
 	readonly #createdAt: Date;
 	#closed: boolean = false;
+	
+	// yeon
+	#remotePipeEnabled = true;
+	/**
+	 * roomId별 Edge 타겟 목록.
+	 * - key: roomId
+	 * - value: 원격 SFU의 base URL (예: "http://10.20.13.200:4443")
+	 *
+	 * roomId를 못 박고 싶지 않으면 '*' 를 default로 사용.
+	 */
+	// yeon
+	#remotePipeTargetsByRoomId: Record<string, Array<{ url: string }>> = {
+	// ✅ 기본값(전체 룸 공통)
+	'*': [
+		{ url: 'http://10.20.13.157:4443' },
+	],
+
+	// ✅ 특정 roomId에만 다르게 적용하고 싶으면:
+	// 'live1': [{ url: 'http://10.0.0.12:4443' }],
+	};
 
 	static async create({
 		roomId,
@@ -163,6 +183,60 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		return room;
+	}
+
+	//yeon
+	private getRemotePipeTargets(): Array<{ url: string; roomId: string }> {
+		if (!this.#remotePipeEnabled) return [];
+
+		const list =
+			this.#remotePipeTargetsByRoomId[this.#roomId] ??
+			this.#remotePipeTargetsByRoomId['*'] ??
+			[];
+	  
+		// roomId는 현재 roomId로 통일
+		return list
+		  .filter(t => typeof t?.url === 'string' && t.url.length > 0)
+		  .map(t => ({ url: t.url, roomId: this.#roomId }));
+	}
+	
+	// yeon
+	private async pipeProducerToEdges(producer: mediasoupTypes.Producer<ProducerAppData>): Promise<void> {
+		const targets = this.getRemotePipeTargets();
+		if (targets.length === 0) return;
+	  
+		// (중요) Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
+		const r: any = this.#producerRouter;
+	  
+		// 각 edge에 대해 pipeToExRouter 호출 (pair 캐시가 있으므로 room/edge당 1쌍 생성 후 재사용)
+		await Promise.allSettled(
+		  	targets.map(remote =>
+			r.pipeToExRouter({
+			  producerId: producer.id,
+			  remote,          // { url, roomId }
+			  keepId: true,
+			  // listenInfo는 Router.ts 기본값이 0.0.0.0이면 생략 가능
+			})
+		  	)
+		);
+	}
+
+	get roomId(): RoomId {
+		return this.#roomId;
+	}
+	  
+	get usePipeTransports(): boolean {
+		return this.#usePipeTransports;
+	}
+	
+	//yeon
+	getRouter(role: 'producer' | 'consumer' = 'producer'): mediasoupTypes.Router {
+		return role === 'consumer' ? this.#consumerRouter : this.#producerRouter;
+	}
+	
+	//yeon
+	getRouterId(role: 'producer' | 'consumer' = 'producer'): string {
+		return this.getRouter(role).id;
 	}
 
 	private constructor({
@@ -568,7 +642,11 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
+			//yeon
+			//Origin->Edge remote pipe (방송/송출 시 자동 복제)
+  			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
 			const otherPeers = this.getOtherPeers(peer);
+			//yeon
 
 			for (const otherPeer of otherPeers) {
 				void otherPeer.consume({
@@ -672,7 +750,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			this.#joiningBroadcasterPeers.delete(broadcasterPeer.id);
 			this.#broadcasterPeers.set(broadcasterPeer.id, broadcasterPeer);
 
+
 			const peers = this.getAllPeers();
+
 
 			for (const peer of peers) {
 				peer.notify('newPeer', { peer: broadcasterPeer.serialize() });
@@ -740,6 +820,10 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
+			//yeon
+			// ✅ Origin->Edge remote pipe
+  			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
+			
 			const peers = this.getAllPeers();
 
 			for (const peer of peers) {

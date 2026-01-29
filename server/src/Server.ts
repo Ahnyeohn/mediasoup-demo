@@ -92,6 +92,14 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 	readonly #networkThrottleAwaitQueue: AwaitQueue = new AwaitQueue();
 	readonly #createdAt: Date;
 	#closed: boolean = false;
+	
+	// Server 클래스 내부
+	#remotePipeHttpServer?: http.Server;
+	//#remotePipeApp?: import('express').Express;
+
+	// registry (API가 만든 객체 저장용)
+	#remotePipeTransports = new Map<string, mediasoup.types.PipeTransport>();
+	#remotePipeProducers  = new Map<string, mediasoup.types.Producer>();
 
 	static async create({
 		config,
@@ -113,6 +121,8 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 			apiServer,
 			networkThrottleSecret,
 		});
+		
+		server.startRemotePipeApi(); // ✅ 여기서 1회 호출
 
 		Server.observer.emit('new-server', server);
 
@@ -131,6 +141,134 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 		);
 
 		return httpOriginHeader;
+	}
+
+	private async readJsonBody(req: http.IncomingMessage): Promise<any> {
+		const chunks: Buffer[] = [];
+		for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+		if (chunks.length === 0) return {};
+		const raw = Buffer.concat(chunks).toString('utf8');
+		try {
+			return JSON.parse(raw);
+		} catch {
+			throw new Error('Invalid JSON body');
+		}
+	}
+	
+	private sendJson(res: http.ServerResponse, status: number, obj: any) {
+		const data = Buffer.from(JSON.stringify(obj));
+		res.writeHead(status, {
+			'content-type': 'application/json',
+			'content-length': data.length,
+		});
+		res.end(data);
+	}
+
+	private startRemotePipeApi(): void {
+		const remotePipeApi = (this.#config as any).remotePipeApi ?? {};
+		const port: number = remotePipeApi.port ?? 4443;
+		const bindIp: string = remotePipeApi.bindIp ?? '0.0.0.0';
+		const pipeBindIp: string = remotePipeApi.pipeBindIp ?? this.#config.http.listenIp ?? '127.0.0.1';
+		/////??????????????????????????????????????????????????????
+	
+		// 단순 라우팅 서버
+		this.#remotePipeHttpServer = http.createServer(async (req, res) => {
+			try {
+				if (!req.url) return this.sendJson(res, 404, { error: 'No url' });
+	
+				// POST만 허용
+				if (req.method !== 'POST') return this.sendJson(res, 405, { error: 'POST only' });
+	
+				const body = await this.readJsonBody(req);
+	
+				// roomId 기반으로 Room 확보
+				// body.roomId는 필수로 보내게 하세요.
+				const roomId = body.roomId as string | undefined;
+				if (!roomId) return this.sendJson(res, 400, { error: 'missing roomId' });
+	
+				const room = await this.getOrCreateRoom({
+					roomId,
+					consumerReplicas: 0,
+					usePipeTransports: false,
+					useRemotePipe: true,
+				});
+	
+				// ✅ Room에서 어떤 Router를 쓸지: 당신의 Room 구현에 맞춰 선택해야 함
+				// 예시로 "producerRouter"를 우선 사용 (Room.ts에 맞춰 수정 필요)
+				const router: any = (room as any).producerRouter ?? (room as any).router ?? (room as any).getRouter?.();
+				if (!router) return this.sendJson(res, 500, { error: 'Room has no router reference' });
+	
+				// 라우팅
+				if (req.url === '/pipe/createPipeTransport') {
+					const { enableSctp, numSctpStreams, enableRtx, enableSrtp } = body;
+	
+					const transport = await router.createPipeTransport({
+						listenInfo: { protocol: 'udp', ip: pipeBindIp },
+						enableSctp: Boolean(enableSctp),
+						numSctpStreams: numSctpStreams ?? { OS: 1024, MIS: 1024 },
+						enableRtx: Boolean(enableRtx),
+						enableSrtp: Boolean(enableSrtp),
+					});
+	
+					this.#remotePipeTransports.set(transport.id, transport);
+	
+					return this.sendJson(res, 200, {
+						id: transport.id,
+						tuple: transport.tuple,
+						srtpParameters: transport.srtpParameters,
+					});
+				}
+	
+				if (req.url === '/pipe/connectPipeTransport') {
+					const { transportId, ip, port, srtpParameters } = body;
+					const transport = this.#remotePipeTransports.get(transportId);
+					if (!transport) return this.sendJson(res, 404, { error: `PipeTransport not found: ${transportId}` });
+	
+					await transport.connect({ ip, port, srtpParameters });
+					return this.sendJson(res, 200, { ok: true });
+				}
+	
+				if (req.url === '/pipe/produce') {
+					const { transportId, id, kind, rtpParameters, paused, appData } = body;
+					const transport = this.#remotePipeTransports.get(transportId);
+					if (!transport) return this.sendJson(res, 404, { error: `PipeTransport not found: ${transportId}` });
+	
+					const producer = await transport.produce({ id, kind, rtpParameters, paused, appData });
+					this.#remotePipeProducers.set(producer.id, producer);
+					return this.sendJson(res, 200, { id: producer.id });
+				}
+	
+				if (req.url === '/pipe/closeProducer') {
+					const { producerId } = body;
+					const p = this.#remotePipeProducers.get(producerId);
+					if (p && !p.closed) p.close();
+					this.#remotePipeProducers.delete(producerId);
+					return this.sendJson(res, 200, { ok: true });
+				}
+	
+				if (req.url === '/pipe/pauseProducer') {
+					const { producerId } = body;
+					const p = this.#remotePipeProducers.get(producerId);
+					if (p && !p.paused) await p.pause();
+					return this.sendJson(res, 200, { ok: true });
+				}
+	
+				if (req.url === '/pipe/resumeProducer') {
+					const { producerId } = body;
+					const p = this.#remotePipeProducers.get(producerId);
+					if (p && p.paused) await p.resume();
+					return this.sendJson(res, 200, { ok: true });
+				}
+	
+				return this.sendJson(res, 404, { error: 'Unknown endpoint' });
+			} catch (e: any) {
+				return this.sendJson(res, 500, { error: e?.message ?? String(e) });
+			}
+		});
+	
+		this.#remotePipeHttpServer.listen(port, bindIp, () => {
+			logger.info(`RemotePipe API listening on http://${bindIp}:${port}`);
+		});
 	}
 
 	private static async createWorkersAndWebRtcServers(
@@ -287,6 +425,9 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 
 		// Stop listening for HTTP/WS connections.
 		this.#httpServer.close();
+		// yeon
+		this.#remotePipeHttpServer?.close();
+		
 		this.#httpServer.closeAllConnections();
 
 		// Close all existing HTTP/WS connections.
@@ -328,10 +469,12 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 		roomId,
 		consumerReplicas = 0,
 		usePipeTransports = false,
+		useRemotePipe = true,
 	}: {
 		roomId: RoomId;
 		consumerReplicas?: number;
 		usePipeTransports?: boolean;
+		useRemotePipe?: boolean;
 	}): Promise<Room> {
 		if (usePipeTransports && this.#config.mediasoup.numWorkers < 2) {
 			throw new InvalidStateError(
@@ -404,7 +547,6 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 			});
 
 			roomData.room = room;
-
 			this.handleRoom(room);
 
 			this.emit('new-room', room);
