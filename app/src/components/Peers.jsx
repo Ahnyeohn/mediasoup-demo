@@ -29,27 +29,6 @@ const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => { // yun
 	);
 };
 
-//const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => {
-//	return (
-//		<div data-component="Peers">
-//			{peers.map(peer => {
-//				return (
-//					<Appear key={peer.id} duration={1000}>
-//						<div
-//							className={classnames('peer-container', {
-//								'active-speaker': peer.id === activeSpeakerId,
-//								speaking: speakingPeerIds.includes(peer.id),
-//							})}
-//						>
-//							<Peer id={peer.id} />
-//						</div>
-//					</Appear>
-//				);
-//			})}
-//		</div>
-//	);
-//};
-
 Peers.propTypes = {
 	peers: PropTypes.arrayOf(appPropTypes.Peer).isRequired,
 	activeSpeakerId: PropTypes.string,

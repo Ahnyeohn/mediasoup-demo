@@ -574,7 +574,7 @@ export default class RoomClient {
 									});
 								},
 								appData: { ...appData, peerId },
-							}); // 이 함수를 수정해야 한다.
+							});
 							//logger
 
 							if (this._e2eKey && e2e.isSupported()) {

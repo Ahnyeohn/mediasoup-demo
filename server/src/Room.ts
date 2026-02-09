@@ -31,6 +31,9 @@ import type {
 
 const staticLogger = new Logger('Room');
 
+//remote mode
+const remotemode = true;
+
 export type RoomCreateOptions = {
 	roomId: RoomId;
 	consumerReplicas: number;
@@ -122,12 +125,13 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	 */
 	// yeon
 	#remotePipeTargetsByRoomId: Record<string, Array<{ url: string }>> = {
-	// ✅ 기본값(전체 룸 공통)
+	// 기본값(전체 룸 공통)
+	// edge SFU의 주소 모두 여기에 적어주면 됨
 	'*': [
-		{ url: 'http://10.20.13.157:4443' },
+		{ url: 'http://10.20.13.157:4445' },// hard coding
 	],
 
-	// ✅ 특정 roomId에만 다르게 적용하고 싶으면:
+	// 특정 roomId에만 다르게 적용하고 싶으면:
 	// 'live1': [{ url: 'http://10.0.0.12:4443' }],
 	};
 
@@ -185,7 +189,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		return room;
 	}
 
-	//yeon
+	// yeon
+	// origin
 	private getRemotePipeTargets(): Array<{ url: string; roomId: string }> {
 		if (!this.#remotePipeEnabled) return [];
 
@@ -201,11 +206,12 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	}
 	
 	// yeon
+	// origin
 	private async pipeProducerToEdges(producer: mediasoupTypes.Producer<ProducerAppData>): Promise<void> {
 		const targets = this.getRemotePipeTargets();
 		if (targets.length === 0) return;
 	  
-		// (중요) Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
+		// Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
 		const r: any = this.#producerRouter;
 	  
 		// 각 edge에 대해 pipeToExRouter 호출 (pair 캐시가 있으므로 room/edge당 1쌍 생성 후 재사용)
@@ -215,7 +221,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			  producerId: producer.id,
 			  remote,          // { url, roomId }
 			  keepId: true,
-			  // listenInfo는 Router.ts 기본값이 0.0.0.0이면 생략 가능
+			  listenInfo: { protocol: 'udp', ip: '10.20.13.197'}, // hard coding
 			})
 		  	)
 		);
@@ -229,12 +235,12 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		return this.#usePipeTransports;
 	}
 	
-	//yeon
+	// yeon
 	getRouter(role: 'producer' | 'consumer' = 'producer'): mediasoupTypes.Router {
 		return role === 'consumer' ? this.#consumerRouter : this.#producerRouter;
 	}
 	
-	//yeon
+	// yeon
 	getRouterId(role: 'producer' | 'consumer' = 'producer'): string {
 		return this.getRouter(role).id;
 	}
@@ -351,7 +357,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		protooTransport: protooTypes.WebSocketTransport;
 		remoteAddress: string;
 	}): void {
-		this.#logger.debug('processWsConnection() [peerId:%o]', peerId);
+		this.#logger.debug('processWsConnection!!() [peerId:%o]', peerId);
 
 		this.mayCloseExistingPeer(peerId);
 
@@ -515,6 +521,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	}
 
 	private handlePeer(peer: Peer): void {
+		this.#logger.debug('handlePeer()');
 		peer.on('closed', () => {
 			this.#joiningPeers.delete(peer.id);
 			this.#peers.delete(peer.id);
@@ -523,6 +530,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		peer.on('joined', callback => {
+			this.#logger.debug('pper joined');
 			this.#joiningPeers.delete(peer.id);
 			this.#peers.set(peer.id, peer);
 
@@ -642,12 +650,14 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
-			//yeon
+			// yeon
+			// origin
 			//Origin->Edge remote pipe (방송/송출 시 자동 복제)
-  			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
+			if (remotemode) {
+				await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
+			}
+  			
 			const otherPeers = this.getOtherPeers(peer);
-			//yeon
-
 			for (const otherPeer of otherPeers) {
 				void otherPeer.consume({
 					producer,
@@ -820,10 +830,10 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
-			//yeon
+			// yeon
 			// ✅ Origin->Edge remote pipe
   			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
-			
+				
 			const peers = this.getAllPeers();
 
 			for (const peer of peers) {
