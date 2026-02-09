@@ -35,11 +35,13 @@ import type {
 	BotDataProducerAppData,
 	DataConsumerAppData,
 } from './types';
+import { threadCpuUsage } from 'process';
 
 const JOIN_TIMEOUT_MS = 10000;
 
 const staticLogger = new Logger('Peer');
-
+// yeon
+const EXTERNAL_PEER_ID = '__external__';
 export type PeerCreateOptions = {
 	peerId: PeerId;
 	protooPeer: protooTypes.Peer;
@@ -251,7 +253,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 			remoteAddress: this.#remoteAddress,
 		};
 	}
-
+	
 	getProducers(): mediasoupTypes.Producer<ProducerAppData>[] {
 		return Array.from(this.#producers.values());
 	}
@@ -861,6 +863,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 				this.#producers.set(producer.id, producer);
 
 				this.handleProducer(producer);
+				this.#logger.debug('handleProducer(): this is producer');
 				this.emit('new-producer', { producer });
 
 				accept({ producerId: producer.id });

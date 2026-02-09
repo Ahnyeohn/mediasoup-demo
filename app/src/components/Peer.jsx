@@ -128,6 +128,7 @@ const mapDispatchToProps = dispatch => {
 };
 
 const PeerContainer = withRoomContext(
+	
 	connect(mapStateToProps, mapDispatchToProps)(Peer)
 );
 

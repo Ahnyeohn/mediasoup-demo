@@ -568,6 +568,13 @@ export default class PeerView extends React.Component {
 			stream.addTrack(videoTrack);
 			videoElem.srcObject = stream;
 
+			logger.warn(
+				'[DBG][PeerView] peerId=%s videoVisible=%s videoCanPlay=%s hasVideoTrack=%s',
+				this.props.peer?.id,
+				this.props.videoVisible,
+				this.state.videoCanPlay,
+				!!this.props.videoTrack
+			);
 			videoElem.oncanplay = () => this.setState({ videoCanPlay: true });
 
 			videoElem.onplay = () => {

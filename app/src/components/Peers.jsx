@@ -8,8 +8,16 @@ import Peer from './Peer';
 
 const role = new URLSearchParams(window.location.search).get('role') || 'viewer'; // yun
 
+// edge
 const Peers = ({ peers, activeSpeakerId, speakingPeerIds }) => { // yun
-	const visiblePeers = role === 'viewer' ? peers.slice(0, 1) : peers;
+
+	// yeon: 외부/송출자 피어 우선 선택
+	// edge
+	// 이전 두번째 피어들은 영상이 보이지 않았던 원인
+	const externalPeer =
+		peers.find(p => p?.device?.flag === 'external') ||
+		peers.find(p => (p?.displayName || '').startsWith('External'));
+	const visiblePeers =  role === 'viewer' ? (externalPeer ? [externalPeer] : peers.slice(0, 1)) : peers;
 
 	return (
 		<div data-component="Peers">

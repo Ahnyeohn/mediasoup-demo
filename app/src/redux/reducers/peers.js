@@ -1,4 +1,31 @@
+import { debug } from "node:console";
+import Logger from "../../Logger";
+
 const initialState = {};
+const logger = new Logger('peers');
+
+const EXTERNAL_PEER_ID = '__external__';
+
+function ensurePeer(state, peerId) {
+
+	if (!peerId) return state;
+	if (state[peerId]) {
+		return state;
+	}
+
+	const isExternal = peerId === EXTERNAL_PEER_ID;
+
+	return {
+		...state,
+		[peerId]: {
+			id: peerId,
+			displayName: isExternal ? 'Origin' : `External(${String(peerId).slice(0, 6)})`,
+			device: { flag: isExternal ? 'external' : 'unknown', name: isExternal ? 'pipe' : 'external' },
+			consumers: [],
+			dataConsumers: [],
+		},
+	};
+}
 
 const peers = (state = initialState, action) => {
 	switch (action.type) {
@@ -35,18 +62,35 @@ const peers = (state = initialState, action) => {
 			return { ...state, [newPeer.id]: newPeer };
 		}
 
+		//어떤 피어에게 새로운 consumer가 생겼으니
+		//그 peer의 consumers 배열에 consumer.id를 추가해서 Redux state를 갱신
+		// edge
 		case 'ADD_CONSUMER': {
-			const { consumer, peerId } = action.payload;
-			const peer = state[peerId];
+			const { consumer } = action.payload;
+			let pid = action.payload.peerId;
 
-			if (!peer) throw new Error('no Peer found for new Consumer');
+			// peerId 자체가 없으면 fallback 하나만 사용
+			if (!pid) pid = EXTERNAL_PEER_ID;
 
-			const newConsumers = [...peer.consumers, consumer.id];
-			const newPeer = { ...peer, consumers: newConsumers };
+			// peer가 없으면 생성 (immutable)
+			const nextState = ensurePeer(state, pid);
 
-			return { ...state, [newPeer.id]: newPeer };
+			const peer = nextState[pid];
+
+			// yeon
+			if (!peer) {
+				logger._debug("[DEBUG] no peer for peerid");
+				return nextState;
+			}
+	
+			return {
+				...nextState,
+				[pid]: {
+					...peer,
+					consumers: [...peer.consumers, consumer.id],
+				},
+			};
 		}
-
 		case 'REMOVE_CONSUMER': {
 			const { consumerId, peerId } = action.payload;
 			const peer = state[peerId];

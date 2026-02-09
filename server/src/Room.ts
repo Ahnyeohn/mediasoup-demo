@@ -1,3 +1,6 @@
+// yeon: room 객체에 externalproducer를 정의하기 위해 필요
+import * as mediasoup from 'mediasoup';
+//
 import type * as mediasoupTypes from 'mediasoup/types';
 import * as protoo from 'protoo-server';
 import type * as protooTypes from 'protoo-server';
@@ -27,9 +30,12 @@ import type {
 	WebRtcTransportAppData,
 	PlainTransportAppData,
 	ProducerAppData,
+	SerializedPeer,
 } from './types';
 
 const staticLogger = new Logger('Room');
+// yeon
+const EXTERNAL_PEER_ID = '__external__';
 
 export type RoomCreateOptions = {
 	roomId: RoomId;
@@ -86,6 +92,16 @@ export type RoomEvents = {
 	];
 };
 
+function dumpProducersBrief(
+	producers: Array<{ id: string; kind?: any; appData?: any }>
+) {
+	return producers.map(p => ({
+		id: p.id,
+		kind: (p as any).kind,
+		appData: (p as any).appData,
+	}));
+}
+
 export class Room extends EnhancedEventEmitter<RoomEvents> {
 	readonly #logger: Logger;
 	readonly #roomId: RoomId;
@@ -110,8 +126,10 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	readonly #broadcasterPeers: Map<string, BroadcasterPeer> = new Map();
 	readonly #createdAt: Date;
 	#closed: boolean = false;
-	
-	// yeon
+
+	// yeon: ProducerAppData왜 이걸로 강제해야 하는지는 잘 모르겠음
+	// 정확히는 Producer<ProducerAppData> 구조 자체를 모르겠음 => 이후 확인 필요
+	#externalProducers = new Map<string, mediasoupTypes.Producer<ProducerAppData>>();
 	#remotePipeEnabled = true;
 	/**
 	 * roomId별 Edge 타겟 목록.
@@ -122,14 +140,63 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	 */
 	// yeon
 	#remotePipeTargetsByRoomId: Record<string, Array<{ url: string }>> = {
-	// ✅ 기본값(전체 룸 공통)
-	'*': [
-		{ url: 'http://10.20.13.157:4443' },
-	],
+		// 기본값(전체 룸 공통)
+		'*': [
+			{ url: 'http://10.20.13.157:4445' },
+		],
 
-	// ✅ 특정 roomId에만 다르게 적용하고 싶으면:
-	// 'live1': [{ url: 'http://10.0.0.12:4443' }],
+		// 특정 roomId에만 다르게 적용하고 싶으면:
+		// 'live1': [{ url: 'http://10.0.0.12:4443' }],
 	};
+
+	// yeon: 외부에서 room의 external producer를 접근하고 값을 채우기 위해 room에서 제공하는 메서드
+	// edge
+	public addExternalProducer(producer: mediasoupTypes.Producer<ProducerAppData>): void {
+		this.#logger.debug("addExternalProducer()");
+
+		this.#externalProducers.set(producer.id, producer);
+		// 정리:중복 등록 방지/메모리 누수 방지
+		producer.observer.once('close', () => {
+			this.#externalProducers.delete(producer.id);
+		});
+	}
+	public getExternalProducers(): mediasoupTypes.Producer<ProducerAppData>[] {
+		return Array.from(this.#externalProducers.values());
+	}
+
+	// yeon
+	// edge
+	public async onExternalProducer(producer: mediasoupTypes.Producer<ProducerAppData>): Promise<void> {
+		
+		this.#observedProducers.set(producer.id, producer);
+
+		producer.observer.on('close', () => {
+			this.#observedProducers.delete(producer.id);
+		});
+
+		// 2) usePipeTransports=true 인 구조라면, 시청자들이 붙는 consumerRouter에서 consume 해야 함
+		//    producerRouter -> consumerRouter 
+		if (this.#usePipeTransports) {
+			await (this.#producerRouter as any).pipeToRouter({
+				producerId: producer.id,
+				router: this.#consumerRouter,
+			});
+		}
+
+		// 3) 이미 들어와 있는 시청자들에게 consume 트리거
+		const peers = Array.from(this.#peers.values());
+		await Promise.allSettled(
+			peers.map(p => p.consume({ producer, consumerReplicas: this.#consumerReplicas }))
+		);
+
+		// 오디오면 observer에도 추가
+		if (producer.kind === 'audio') {
+			this.#audioLevelObserver.addProducer({ producerId: producer.id }).catch(() => { });
+			this.#activeSpeakerObserver.addProducer({ producerId: producer.id }).catch(() => { });
+		}
+
+		// peers.forEach(p => p.notify('newProducer', { producerId: producer.id, kind: producer.kind }));
+	}
 
 	static async create({
 		roomId,
@@ -185,7 +252,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		return room;
 	}
 
-	//yeon
+	// yeon
 	private getRemotePipeTargets(): Array<{ url: string; roomId: string }> {
 		if (!this.#remotePipeEnabled) return [];
 
@@ -193,48 +260,48 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			this.#remotePipeTargetsByRoomId[this.#roomId] ??
 			this.#remotePipeTargetsByRoomId['*'] ??
 			[];
-	  
+
 		// roomId는 현재 roomId로 통일
 		return list
-		  .filter(t => typeof t?.url === 'string' && t.url.length > 0)
-		  .map(t => ({ url: t.url, roomId: this.#roomId }));
+			.filter(t => typeof t?.url === 'string' && t.url.length > 0)
+			.map(t => ({ url: t.url, roomId: this.#roomId }));
 	}
-	
+
 	// yeon
 	private async pipeProducerToEdges(producer: mediasoupTypes.Producer<ProducerAppData>): Promise<void> {
 		const targets = this.getRemotePipeTargets();
 		if (targets.length === 0) return;
-	  
+
 		// (중요) Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
 		const r: any = this.#producerRouter;
-	  
+
 		// 각 edge에 대해 pipeToExRouter 호출 (pair 캐시가 있으므로 room/edge당 1쌍 생성 후 재사용)
 		await Promise.allSettled(
-		  	targets.map(remote =>
-			r.pipeToExRouter({
-			  producerId: producer.id,
-			  remote,          // { url, roomId }
-			  keepId: true,
-			  // listenInfo는 Router.ts 기본값이 0.0.0.0이면 생략 가능
-			})
-		  	)
+			targets.map(remote =>
+				r.pipeToExRouter({
+					producerId: producer.id,
+					remote,          // { url, roomId }
+					keepId: true,
+					// listenInfo는 Router.ts 기본값이 0.0.0.0이면 생략 가능
+				})
+			)
 		);
 	}
 
 	get roomId(): RoomId {
 		return this.#roomId;
 	}
-	  
+
 	get usePipeTransports(): boolean {
 		return this.#usePipeTransports;
 	}
-	
-	//yeon
+
+	// yeon
 	getRouter(role: 'producer' | 'consumer' = 'producer'): mediasoupTypes.Router {
 		return role === 'consumer' ? this.#consumerRouter : this.#producerRouter;
 	}
-	
-	//yeon
+
+	// yeon
 	getRouterId(role: 'producer' | 'consumer' = 'producer'): string {
 		return this.getRouter(role).id;
 	}
@@ -377,35 +444,35 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		internalData,
 	}: RequestData<Name> extends undefined
 		? RequestInternalData<Name> extends undefined
-			? {
-					name: Name;
-					method: RequestApiMethod<Name>;
-					path: RequestApiPath<Name>;
-					data?: undefined;
-					internalData?: undefined;
-				}
-			: {
-					name: Name;
-					method: RequestApiMethod<Name>;
-					path: RequestApiPath<Name>;
-					data?: undefined;
-					internalData: RequestInternalData<Name>;
-				}
+		? {
+			name: Name;
+			method: RequestApiMethod<Name>;
+			path: RequestApiPath<Name>;
+			data?: undefined;
+			internalData?: undefined;
+		}
+		: {
+			name: Name;
+			method: RequestApiMethod<Name>;
+			path: RequestApiPath<Name>;
+			data?: undefined;
+			internalData: RequestInternalData<Name>;
+		}
 		: RequestInternalData<Name> extends undefined
-			? {
-					name: Name;
-					method: RequestApiMethod<Name>;
-					path: RequestApiPath<Name>;
-					data: RequestData<Name>;
-					internalData?: undefined;
-				}
-			: {
-					name: Name;
-					method: RequestApiMethod<Name>;
-					path: RequestApiPath<Name>;
-					data: RequestData<Name>;
-					internalData: RequestInternalData<Name>;
-				}): Promise<RequestResponseData<Name>> {
+		? {
+			name: Name;
+			method: RequestApiMethod<Name>;
+			path: RequestApiPath<Name>;
+			data: RequestData<Name>;
+			internalData?: undefined;
+		}
+		: {
+			name: Name;
+			method: RequestApiMethod<Name>;
+			path: RequestApiPath<Name>;
+			data: RequestData<Name>;
+			internalData: RequestInternalData<Name>;
+		}): Promise<RequestResponseData<Name>> {
 		return new Promise((resolve, reject) => {
 			this.handleApiRequest({
 				name,
@@ -514,6 +581,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		}
 	}
 
+	// yeon
+	// edge
 	private handlePeer(peer: Peer): void {
 		peer.on('closed', () => {
 			this.#joiningPeers.delete(peer.id);
@@ -523,6 +592,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		peer.on('joined', callback => {
+			this.#logger.debug('handlePeer |  new peer joined the room');
 			this.#joiningPeers.delete(peer.id);
 			this.#peers.set(peer.id, peer);
 
@@ -534,6 +604,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				...broadcasterPeers.map(broadcasterPeer => broadcasterPeer.serialize()),
 			]);
 
+			// 다른 모든 피어들 불러와서 그 피어들의 프로듀서들을 불러와서 consume 시키기
 			for (const otherPeer of otherPeers) {
 				otherPeer.notify('newPeer', { peer: peer.serialize() });
 
@@ -557,6 +628,43 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 					});
 				}
 			}
+
+			// yeon
+			// edge
+			// 룸에서 externalProducers를 따로 관리한다.
+			// 외부 producer들을 불러와서 새로운 피어에게 consume
+			const externalList = this.getExternalProducers(); // 배열이면 그대로
+			this.#logger.warn(
+				'[JOIN] external producers count=%d list=%o',
+				externalList.length,
+				dumpProducersBrief(externalList as any)
+			);
+
+			this.#logger.warn('[DEBUG][JOIN] peerId=%s', peer.id);
+
+			for (const producer of externalList) {
+				this.#logger.warn(
+					'[DEBUG][JOIN] consuming external producer - producerId=%s', producer.id,);
+
+				void peer.consume({ producer, consumerReplicas: this.#consumerReplicas })
+					.then(() => {
+						this.#logger.warn(
+							'[DEBUG][JOIN] consume external producer success -> peerId=%s producerId=%s',
+							peer.id,
+							producer.id
+						);
+					})
+					.catch((e: any) => {
+						this.#logger.error(
+							'[DEBUG][JOIN] consume external producer failed -> peerId=%s producerId=%s err=%o',
+							peer.id,
+							producer.id,
+							e
+						);
+					});
+			}
+			
+			this.#logger.warn('[JOIN] finished external producer loop for peerId=%s', peer.id);
 
 			void peer.consumeData({ dataProducer: this.#bot.getDataProducer() });
 		});
@@ -642,12 +750,11 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
-			//yeon
+			// yeon
 			//Origin->Edge remote pipe (방송/송출 시 자동 복제)
-  			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
-			const otherPeers = this.getOtherPeers(peer);
-			//yeon
+			// await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
 
+			const otherPeers = this.getOtherPeers(peer);
 			for (const otherPeer of otherPeers) {
 				void otherPeer.consume({
 					producer,
@@ -658,11 +765,11 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			if (producer.kind === 'audio') {
 				this.#audioLevelObserver
 					.addProducer({ producerId: producer.id })
-					.catch(() => {});
+					.catch(() => { });
 
 				this.#activeSpeakerObserver
 					.addProducer({ producerId: producer.id })
-					.catch(() => {});
+					.catch(() => { });
 			}
 		});
 
@@ -820,10 +927,10 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 				});
 			}
 
-			//yeon
+			// yeon
 			// ✅ Origin->Edge remote pipe
-  			await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
-			
+			// await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
+
 			const peers = this.getAllPeers();
 
 			for (const peer of peers) {
@@ -836,11 +943,11 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			if (producer.kind === 'audio') {
 				this.#audioLevelObserver
 					.addProducer({ producerId: producer.id })
-					.catch(() => {});
+					.catch(() => { });
 
 				this.#activeSpeakerObserver
 					.addProducer({ producerId: producer.id })
-					.catch(() => {});
+					.catch(() => { });
 			}
 		});
 

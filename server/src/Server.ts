@@ -21,9 +21,14 @@ import type {
 	RoomId,
 	SerializedServer,
 	WorkerAppData,
+	ProducerAppData, // yeon
 } from './types';
 
 const logger = new Logger('Server');
+
+// yeon
+export const EXTERNAL_PEER_ID = '__external__';
+export const EXTERNAL_PEER_DISPLAY_NAME = 'External Producer';
 
 export type ServerCreateOptions = {
 	config: ServerConfig;
@@ -93,14 +98,17 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 	readonly #createdAt: Date;
 	#closed: boolean = false;
 	
+	// yeon
 	// Server 클래스 내부
 	#remotePipeHttpServer?: http.Server;
 	//#remotePipeApp?: import('express').Express;
 
-	// registry (API가 만든 객체 저장용)
+	// yeon 
 	#remotePipeTransports = new Map<string, mediasoup.types.PipeTransport>();
 	#remotePipeProducers  = new Map<string, mediasoup.types.Producer>();
 
+	// yeon
+	// edge
 	static async create({
 		config,
 		networkThrottleSecret,
@@ -122,7 +130,9 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 			networkThrottleSecret,
 		});
 		
-		server.startRemotePipeApi(); // ✅ 여기서 1회 호출
+		// yeon
+		// edge
+		server.startRemotePipeApi(); //여기서 Expipe를 위한 서버를 구축하는 함수 호출
 
 		Server.observer.emit('new-server', server);
 
@@ -155,6 +165,8 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 		}
 	}
 	
+	// yeon
+	// edge
 	private sendJson(res: http.ServerResponse, status: number, obj: any) {
 		const data = Buffer.from(JSON.stringify(obj));
 		res.writeHead(status, {
@@ -164,25 +176,22 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 		res.end(data);
 	}
 
+	// yeon
+	// edge
 	private startRemotePipeApi(): void {
 		const remotePipeApi = (this.#config as any).remotePipeApi ?? {};
-		const port: number = remotePipeApi.port ?? 4443;
+		const port: number = remotePipeApi.port ?? 4445;
 		const bindIp: string = remotePipeApi.bindIp ?? '0.0.0.0';
-		const pipeBindIp: string = remotePipeApi.pipeBindIp ?? this.#config.http.listenIp ?? '127.0.0.1';
-		/////??????????????????????????????????????????????????????
+		const pipeBindIp: string = '10.20.13.157'; // hard coding
 	
-		// 단순 라우팅 서버
 		this.#remotePipeHttpServer = http.createServer(async (req, res) => {
 			try {
 				if (!req.url) return this.sendJson(res, 404, { error: 'No url' });
-	
-				// POST만 허용
 				if (req.method !== 'POST') return this.sendJson(res, 405, { error: 'POST only' });
 	
 				const body = await this.readJsonBody(req);
 	
-				// roomId 기반으로 Room 확보
-				// body.roomId는 필수로 보내게 하세요.
+				// roomId 기반으로 Room 조회한다. 상대방은 body.roomId를 필수로 보내야 함
 				const roomId = body.roomId as string | undefined;
 				if (!roomId) return this.sendJson(res, 400, { error: 'missing roomId' });
 	
@@ -193,12 +202,10 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 					useRemotePipe: true,
 				});
 	
-				// ✅ Room에서 어떤 Router를 쓸지: 당신의 Room 구현에 맞춰 선택해야 함
-				// 예시로 "producerRouter"를 우선 사용 (Room.ts에 맞춰 수정 필요)
+				// "producerRouter"를 사용, 만약 usePipe 옵션인 경우 둘다 해줘야 함
 				const router: any = (room as any).producerRouter ?? (room as any).router ?? (room as any).getRouter?.();
 				if (!router) return this.sendJson(res, 500, { error: 'Room has no router reference' });
 	
-				// 라우팅
 				if (req.url === '/pipe/createPipeTransport') {
 					const { enableSctp, numSctpStreams, enableRtx, enableSrtp } = body;
 	
@@ -211,7 +218,8 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 					});
 	
 					this.#remotePipeTransports.set(transport.id, transport);
-	
+					
+					logger.debug('createPipeTransport and send json');
 					return this.sendJson(res, 200, {
 						id: transport.id,
 						tuple: transport.tuple,
@@ -225,6 +233,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 					if (!transport) return this.sendJson(res, 404, { error: `PipeTransport not found: ${transportId}` });
 	
 					await transport.connect({ ip, port, srtpParameters });
+					logger.debug('connect and send json');
 					return this.sendJson(res, 200, { ok: true });
 				}
 	
@@ -232,9 +241,28 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 					const { transportId, id, kind, rtpParameters, paused, appData } = body;
 					const transport = this.#remotePipeTransports.get(transportId);
 					if (!transport) return this.sendJson(res, 404, { error: `PipeTransport not found: ${transportId}` });
-	
-					const producer = await transport.produce({ id, kind, rtpParameters, paused, appData });
+
+					const producer = await transport.produce({ id, kind, rtpParameters, paused, 
+						appData: {
+							peerId: EXTERNAL_PEER_ID, // hardcoding
+							source: kind === 'video' ? 'video' : 'audio',
+							// 필요하면 추가 필드도 여기에
+							...(appData ?? {})
+						} as ProducerAppData
+					});
+					//서버 객체에 producer를 저장 => 이후 이어지는 요청에서 producer를 꺼내 쓰기 위함 
 					this.#remotePipeProducers.set(producer.id, producer);
+				
+					// url에 입력한 roomid, origin에서의 roomid와 동일한 값을 받아왔기 때문에 기존에 있던 룸을 반환
+					const room = await this.getOrCreateRoom({ roomId, consumerReplicas: 0, usePipeTransports: false, useRemotePipe: true });
+
+					// 여기서 producer를 받아와서 이미 들어와 있는 시청자들에게 consume 트리거
+					// 그러나, 이후 들어오는 시청자들에게도 consume하기 위한 과정 필요하기 때문에 ExternalProducers 맵에 추가
+					// 근데 익스터널은 모두 __external__이걸로 취급하기 때문에 추후 중복 우려 가능 이후에 수정해야 함
+					room.addExternalProducer(producer);
+					await (room as any).onExternalProducer?.(producer);
+
+					logger.debug('produce and send json');
 					return this.sendJson(res, 200, { id: producer.id });
 				}
 	
@@ -259,9 +287,11 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 					if (p && p.paused) await p.resume();
 					return this.sendJson(res, 200, { ok: true });
 				}
-	
+				
+				logger.debug('Unknown endpoint');
 				return this.sendJson(res, 404, { error: 'Unknown endpoint' });
 			} catch (e: any) {
+				logger.debug('startRemotePipeApi error');
 				return this.sendJson(res, 500, { error: e?.message ?? String(e) });
 			}
 		});
