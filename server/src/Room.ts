@@ -129,6 +129,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	// edge SFU의 주소 모두 여기에 적어주면 됨
 	'*': [
 		{ url: 'http://10.20.13.157:4445' },// hard coding
+		
 	],
 
 	// 특정 roomId에만 다르게 적용하고 싶으면:
@@ -221,7 +222,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			  producerId: producer.id,
 			  remote,          // { url, roomId }
 			  keepId: true,
-			  listenInfo: { protocol: 'udp', ip: '10.20.13.197'}, // hard coding
+			  listenInfo: { protocol: 'udp', ip: String(process.env['SERVER_IP'])}, // hard coding: 수정완료
 			})
 		  	)
 		);
@@ -652,6 +653,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 			// yeon
 			// origin
+			// origin일때만 호출해야 함
 			//Origin->Edge remote pipe (방송/송출 시 자동 복제)
 			if (remotemode) {
 				await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);

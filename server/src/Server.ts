@@ -122,7 +122,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 			networkThrottleSecret,
 		});
 		
-		// server.startRemotePipeApi(); // ✅ 여기서 1회 호출
+		// server.startRemotePipeApi();
 
 		Server.observer.emit('new-server', server);
 
