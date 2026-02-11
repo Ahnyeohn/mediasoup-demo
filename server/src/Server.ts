@@ -182,7 +182,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 		const remotePipeApi = (this.#config as any).remotePipeApi ?? {};
 		const port: number = remotePipeApi.port ?? 4445;
 		const bindIp: string = remotePipeApi.bindIp ?? '0.0.0.0';
-		const pipeBindIp: string = String(process.env['SERVER_IP']); // 
+		const pipeBindIp: string = String(process.env['SERVER_IP']); // hard coding: 수정완료
 	
 		this.#remotePipeHttpServer = http.createServer(async (req, res) => {
 			try {
