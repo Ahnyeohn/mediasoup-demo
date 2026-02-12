@@ -81,7 +81,7 @@ npm install --legacy-peer-deps
 
 ---
 ## Integrated Code (Edge & Origin)
-change the mod 
+change the mode 
 * `mediasoup-demo/mode_config.json`
 * `mediasoup-demo/app/public/config.js`
 
