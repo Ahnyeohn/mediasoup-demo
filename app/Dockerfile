@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-WORKDIR /work/app
+WORKDIR /work/mediasoup-demo/app
 
 # ---- 기본 도구 + Node.js v22.22.0 설치 ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,15 +15,22 @@ RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-l
   && node -v && npm -v
 
 # ---- 소스 복사 ----
-# Dockerfile이 있는 디렉토리(= mediasoup-demo/app)의 내용을 컨테이너로 복사
-COPY . .
+# Dockerfile이 있는 디렉토리의 내용을 컨테이너로 복사
+# 명심: 여기서 서버의 경로는 dockerfile 현재 경로 기준이 아닌,
+# docker compose 파일에서 설정된 context 경로 기준이다.
+# 즉 현재 기준 경로는 network/ 임 
+COPY mediasoup-demo/app .
 
-# ---- 의존성 설치 + 빌드 ----
-RUN npm install --legacy-peer-deps
+WORKDIR /work/mediasoup-demo/server
+COPY mediasoup-demo/server/config.mjs ./config.mjs
+WORKDIR /work/mediasoup-demo/app
+
+# 의존성 설치 + 빌드
+# npm install 할 때, 해당 경로에 package.json을 보장해야 한다.
+RUN npm install --legacy-peer-deps 
 RUN npm install -g http-server
 RUN npm run build
 
-# ---- HTTPS 정적서버 ----
 EXPOSE 5555
 
 # cert/key는 보통 docker-compose에서 볼륨 마운트로 넣습니다.
