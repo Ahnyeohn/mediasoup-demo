@@ -84,4 +84,5 @@ npm install --legacy-peer-deps
 change the mod 
 * `mediasoup-demo/mode_config.json`
 * `mediasoup-demo/app/public/config.js`
+
 after changing the mode, you need to rebuild `/app`
