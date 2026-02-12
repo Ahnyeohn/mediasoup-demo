@@ -1,3 +1,3 @@
-window.__CFG__ = { mode: "origin" }; // 또는 "origin"
+window.__CFG__ = { mode: "edge" };
 console.log("[config.js] loaded", window.__CFG__);
 
