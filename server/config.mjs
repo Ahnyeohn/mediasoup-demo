@@ -34,8 +34,8 @@ export const config = {
 		 */
 		// 서버에 맞게 경로를 수정 
 		tls: {
-			cert: '/home/n2sl/yeon/qos/network/mediasoup-demo/server/certs/cert.pem',
-			key: '/home/n2sl/yeon/qos/network/mediasoup-demo/server/certs/key.pem'
+			cert: './certs/cert.pem',
+			key: './certs/key.pem'
 		},
 	},
 	/**

@@ -252,14 +252,14 @@ export class TerminalServer extends EnhancedEventEmitter<TerminalServerEvents> {
 	}
 
 	private static runServerObserver(): void {
-		Server.observer.on('new-server', server => {
+		Server.observer.on('new-server', (server: any) => {
 			TerminalServer.#server = server;
 
 			server.on('closed', () => {
 				TerminalServer.#server = undefined;
 			});
 
-			server.on('new-room', room => {
+			server.on('new-room', (room: any) => {
 				TerminalServer.#rooms.set(room.id, room);
 				room.on('closed', () => {
 					TerminalServer.#rooms.delete(room.id);
