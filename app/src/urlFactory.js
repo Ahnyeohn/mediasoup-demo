@@ -1,16 +1,6 @@
-import qs from 'qs';
+import urlFactoryOrigin from './urlFactory.origin';
+import urlFactoryEdge from './urlFactory.edge';
 
-let protooPort = 4443;
+const mode = window.__CFG__?.mode ?? 'origin';
 
-if (window.location.hostname === 'test.mediasoup.org') {
-	protooPort = 4444;
-}
-
-const hostname = window.location.hostname;
-const protocol = 'wss';
-
-export function getProtooUrl(params) {
-	const query = qs.stringify(params);
-
-	return `${protocol}://${hostname}:${protooPort}/?${query}`;
-}
+export default (mode === 'edge') ? urlFactoryEdge : urlFactoryOrigin;

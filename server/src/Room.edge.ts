@@ -142,7 +142,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	#remotePipeTargetsByRoomId: Record<string, Array<{ url: string }>> = {
 		// 기본값(전체 룸 공통)
 		'*': [
-			{ url: 'http://10.20.13.190:4445' },
+			{ url: 'http://10.20.13.192:4445' },
 		],
 
 		// 특정 roomId에만 다르게 적용하고 싶으면:
