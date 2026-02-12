@@ -72,6 +72,12 @@ export class WsServer extends EnhancedEventEmitter<WsServerEvents> {
 	private handleProtooServer(): void {
 		// eslint-disable-next-line @typescript-eslint/no-misused-promises
 		this.#protooServer.on('connectionrequest', async (info, accept, reject) => {
+			logger.warn(
+				'WS origin check failed [got:%o expected:%o]',
+				info.request.headers.origin,
+				this.#httpOriginHeader
+			); // yun
+
 			// Validate HTTP Origin header.
 			if (
 				!utils.areSameHttpOrigins(
