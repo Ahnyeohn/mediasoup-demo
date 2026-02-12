@@ -1,6 +1,8 @@
-import urlFactoryOrigin from './urlFactory.origin';
-import urlFactoryEdge from './urlFactory.edge';
+import * as origin from './urlFactory.origin';
+import * as edge from './urlFactory.edge';
 
 const mode = window.__CFG__?.mode ?? 'origin';
 
-export default (mode === 'edge') ? urlFactoryEdge : urlFactoryOrigin;
+const impl = mode === 'edge' ? edge : origin;
+
+export const getProtooUrl = impl.getProtooUrl;
