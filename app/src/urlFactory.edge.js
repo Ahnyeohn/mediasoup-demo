@@ -8,7 +8,8 @@ export function getProtooUrl(params) {
 	}
 
 	//const hostname = window.location.hostname;
-	const hostname = '10.20.13.190'; // yun: HA Proxy's IP addr
+	// 10.20.13.197를 haporxy 서버로 고정
+	const hostname = '10.20.13.197'; // yun: HA Proxy's IP addr
 	const protocol = 'wss';
 	const query = qs.stringify(params);
 

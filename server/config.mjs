@@ -14,7 +14,7 @@ import * as os from 'node:os';
  * @type {import('./src/types.ts').ServerConfig}
  */
 
-const ANNOUNCED_IP = process.env['MEDIASOUP_ANNOUNCED_ADDRESS'] ?? process.env['SERVER_IP'] ?? '127.0.0.1';
+const ANNOUNCED_IP = process.env['MEDIASOUP_ANNOUNCED_ADDRESS'] ?? process.env['SERVER_IP'];
 
 export const config = {
 	/**

@@ -142,7 +142,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	#remotePipeTargetsByRoomId: Record<string, Array<{ url: string }>> = {
 		// 기본값(전체 룸 공통)
 		'*': [
-			{ url: 'http://10.20.13.192:4445' },
+			{ url: 'http://10.20.13.157:4445' }, //hardcoding
+			{ url: 'http://10.20.13.190:4445' }, //hardcoding
 		],
 
 		// 특정 roomId에만 다르게 적용하고 싶으면:
@@ -250,42 +251,6 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		return room;
-	}
-
-	// yeon
-	private getRemotePipeTargets(): Array<{ url: string; roomId: string }> {
-		if (!this.#remotePipeEnabled) return [];
-
-		const list =
-			this.#remotePipeTargetsByRoomId[this.#roomId] ??
-			this.#remotePipeTargetsByRoomId['*'] ??
-			[];
-
-		// roomId는 현재 roomId로 통일
-		return list
-			.filter(t => typeof t?.url === 'string' && t.url.length > 0)
-			.map(t => ({ url: t.url, roomId: this.#roomId }));
-	}
-
-	// yeon
-	private async pipeProducerToEdges(producer: mediasoupTypes.Producer<ProducerAppData>): Promise<void> {
-		const targets = this.getRemotePipeTargets();
-		if (targets.length === 0) return;
-
-		// (중요) Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
-		const r: any = this.#producerRouter;
-
-		// 각 edge에 대해 pipeToExRouter 호출 (pair 캐시가 있으므로 room/edge당 1쌍 생성 후 재사용)
-		await Promise.allSettled(
-			targets.map(remote =>
-				r.pipeToExRouter({
-					producerId: producer.id,
-					remote,          // { url, roomId }
-					keepId: true,
-					// listenInfo는 Router.ts 기본값이 0.0.0.0이면 생략 가능
-				})
-			)
-		);
 	}
 
 	get roomId(): RoomId {

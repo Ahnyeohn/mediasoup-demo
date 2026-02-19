@@ -30,8 +30,8 @@ WORKDIR /work/mediasoup
 
 # 에러:
 # COPY mediasoup ./mediasoup로 복사한 소스 안에 내용물이
-#worker/out/.../build 같은 “이미 configure 되어있는 빌드 산출물”이 같이 들어왔고, 
-# 그 안의 설정 파일이 “호스트 경로(/home/n2sl/...)”를 기억하고 있어서 
+#worker/out/.../build 같은 "이미 configure 되어있는 빌드 산출물"이 같이 들어왔고, 
+# 그 안의 설정 파일이 "호스트 경로(/home/n2sl/...)"를 기억하고 있어서 
 # 컨테이너에서는 존재하지 않아 FileNotFoundError
 RUN npm ci && npm run typescript:build && npm run worker:build
 

@@ -33,8 +33,7 @@ RUN npm run build
 
 EXPOSE 5555
 
-# cert/key는 보통 docker-compose에서 볼륨 마운트로 넣습니다.
+# cert/key는 docker-compose에서 볼륨 마운트를 ㅠ사용
 #   - app 컨테이너 기준 경로: /work/server/certs/cert.pem, /work/server/certs/key.pem
-#     (아래 CMD에서 ../server/certs 를 쓰기 때문에 WORKDIR=/work/app 기준으로 ../server/certs 여야 함)
 
 CMD ["sh", "-lc", "http-server dist -S -C ../server/certs/cert.pem -K ../server/certs/key.pem -p 5555"]
