@@ -3,7 +3,7 @@ import path from 'node:path';
 
 type Mode = 'origin' | 'edge';
 
-const CONFIG_PATH = path.resolve(__dirname, '../../mode_config.json');
+const CONFIG_PATH = path.resolve(__dirname, '../mode_config.json');
 
 function loadMode(): Mode {
 	try {
