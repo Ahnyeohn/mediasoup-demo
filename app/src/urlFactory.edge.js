@@ -1,7 +1,7 @@
 import qs from 'qs';
 
 export function getProtooUrl(params) {
-	let protooPort = 5216; // yun: HA Proxy's Port
+	let protooPort = 5213; // yun: HA Proxy's Port
 
 	if (window.location.hostname === 'test.mediasoup.org') {
 		protooPort = 4444;

@@ -222,7 +222,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			  producerId: producer.id,
 			  remote,          // { url, roomId }
 			  keepId: true,
-			  listenInfo: { protocol: 'udp', ip: '10.20.13.151'}, // hard coding, origin 주소 기입
+			  listenInfo: { protocol: 'udp', ip: '10.20.13.197'}, // hard coding, origin 주소 기입
 			})
 		  	)
 		);
