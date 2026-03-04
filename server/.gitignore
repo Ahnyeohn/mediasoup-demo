@@ -15,3 +15,6 @@
 /.vscode
 /.zed
 /mediasoup_valgrind_*
+
+# server certs file
+/certs

@@ -32,7 +32,7 @@ export const config = {
 		/**
 		 * Optional. If tls is not set, server will use HTTP instead.
 		 */
-		// 서버에 맞게 경로를 수정 
+		//서버에 맞게 경로를 수정 
 		tls: {
 			cert: './certs/cert.pem',
 			key: './certs/key.pem'
@@ -43,7 +43,8 @@ export const config = {
 	 */
 	mediasoup: {
 		// Number of mediasoup workers to launch.
-		numWorkers: Object.keys(os.cpus()).length,
+		//numWorkers: Object.keys(os.cpus()).length,
+		numWorkers: 1,
 		/**
 		 * mediasoup WorkerSettings.
 		 *
