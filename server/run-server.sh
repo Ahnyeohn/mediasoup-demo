@@ -1,3 +1,3 @@
 #!/bin/bash
 
-DEBUG="mediasoup-demo-server* mediasoup*" npm start
+DEBUG="mediasoup* mediasoup-demo-server*" npm start

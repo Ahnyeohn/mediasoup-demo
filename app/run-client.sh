@@ -1,3 +1,3 @@
 #!/bin/bash
 
-http-server dist -S -C ../server/certs/cert.pem -K ../server/certs/key.pem -p 5555
+http-server dist -S -K ../server/certs/key.pem -C ../server/certs/cert.pem -p 5555
