@@ -33,6 +33,128 @@ const logger = new Logger('RoomClient');
 
 let store;
 
+// yun
+let oneWayDelay = 0;
+
+// yeon
+const latencyMeasurementState = {
+	active: false,
+	startedAt: null,
+	stoC: [],
+	ptoS: [],
+	lastFrameId: null,
+	logger: null
+};
+
+function percentileFromSorted(sorted, p) {
+	if (!sorted.length) return null;
+	if (p <= 0) return sorted[0];
+	if (p >= 100) return sorted[sorted.length - 1];
+
+	const idx = (p / 100) * (sorted.length - 1);
+	const lo = Math.floor(idx);
+	const hi = Math.ceil(idx);
+
+	if (lo === hi) return sorted[lo];
+
+	const frac = idx - lo;
+	return sorted[lo] * (1 - frac) + sorted[hi] * frac;
+}
+
+function computeBasicStats(values) {
+	if (!values || values.length === 0) return null;
+
+	const sorted = [...values].sort((a, b) => a - b);
+	const n = values.length;
+
+	let sum = 0;
+	let min = Infinity;
+	let max = -Infinity;
+
+	for (const v of values) {
+		sum += v;
+		if (v < min) min = v;
+		if (v > max) max = v;
+	}
+
+	const mean = sum / n;
+
+	let varianceAcc = 0;
+	for (const v of values) {
+		const d = v - mean;
+		varianceAcc += d * d;
+	}
+
+	return {
+		count: n,
+		min,
+		max,
+		mean,
+		median: percentileFromSorted(sorted, 50),
+		p95: percentileFromSorted(sorted, 95),
+		p99: percentileFromSorted(sorted, 99),
+		stddev: Math.sqrt(varianceAcc / n)
+	};
+}
+
+function printOneStats(logger, name, stats) {
+	if (!stats) {
+		console?.log?.(`[latency-summary] ${name}: no samples`);
+		return;
+	}
+
+	console?.log?.(
+		`[latency-summary] ${name}: ` +
+		`count=${stats.count}, ` +
+		`min=${stats.min.toFixed(2)}ms, ` +
+		`mean=${stats.mean.toFixed(2)}ms, ` +
+		`median=${stats.median.toFixed(2)}ms, ` +
+		`p95=${stats.p95.toFixed(2)}ms, ` +
+		`p99=${stats.p99.toFixed(2)}ms, ` +
+		`max=${stats.max.toFixed(2)}ms, ` +
+		`stddev=${stats.stddev.toFixed(2)}ms`
+	);
+}
+
+function startLatencyMeasurement(logger = console) {
+	latencyMeasurementState.active = true;
+	latencyMeasurementState.startedAt = Date.now();
+	latencyMeasurementState.stoC = [];
+	latencyMeasurementState.ptoS = [];
+	latencyMeasurementState.lastFrameId = null;
+	latencyMeasurementState.logger = logger;
+
+	//logger?.debug?.('[latency-control] measurement started');
+	console?.log?.('[latency-control] measurement started');
+}
+
+function stopLatencyMeasurement() {
+	const logger = latencyMeasurementState.logger || console;
+
+	if (!latencyMeasurementState.active) {
+		logger?.warn?.('[latency-control] measurement is not active');
+		return;
+	}
+
+	latencyMeasurementState.active = false;
+
+	const durationMs =
+		latencyMeasurementState.startedAt == null
+			? 0
+			: Date.now() - latencyMeasurementState.startedAt;
+
+	console?.log?.(
+		`[latency-summary] duration=${durationMs}ms, lastFrame=${latencyMeasurementState.lastFrameId}`
+	);
+
+	printOneStats(logger, 'PtoS', computeBasicStats(latencyMeasurementState.ptoS));
+	printOneStats(logger, 'StoC', computeBasicStats(latencyMeasurementState.stoC));
+}
+
+// 관리자 콘솔에서 바로 쓰기 쉽게 전역 노출
+window.startLatencyMeasurement = startLatencyMeasurement;
+window.stopLatencyMeasurement = stopLatencyMeasurement;
+
 // yeon
 // ===== Latency probe helpers (Receiver) =====
 const TIME_STAMP = 0x4c41544e; // 'LATN'
@@ -44,6 +166,28 @@ function nowEpochMs() {
 	// 수신 시각: epoch(ms) 기반. (송신 측도 같은 기준으로 넣어야 함)
 	return performance.timeOrigin + performance.now();
 	//return Date.now();
+}
+
+// yeon
+// ===== Sync helpers =====
+function nowMonoMs() {
+	// Viewer 로컬 monotonic clock 기준(ms)
+	return performance.now();
+}
+function safeJsonParse(message) {
+	if (typeof message !== 'string')
+		return null;
+
+	try {
+		return JSON.parse(message);
+	}
+	catch (e) {
+		return null;
+	}
+}
+function computeViewerToSfuOffsetMs({ t1ViewMs, t2SfuMs, t3ViewMs }) {
+	// offset = SFU clock - Viewer clock
+	return t2SfuMs - ((t1ViewMs + t3ViewMs) / 2);
 }
 
 // yeon
@@ -75,7 +219,7 @@ function setupSenderTimestamp(rtpSender, { logger } = {}) {
 				const dv = new DataView(header);
 
 				dv.setUint32(0, TIME_STAMP, true); // STAMP
-				dv.setUint32(4, frameId, true);    // FrameID
+				dv.setUint32(4, frameId, true);    // FrameID`
 				dv.setFloat64(8, sendTsMs, true);  // sendTsMs
 				dv.setFloat64(16, 0, true);        // SFUrecvMs
 				dv.setFloat64(24, 0, true);        // SFUsendMs
@@ -111,7 +255,7 @@ function sliceArrayBuffer(buffer, byteOffset, byteLength) {
 }
 
 // yeon
-function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency } = {}) {
+function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency, getViewerToSfuOffsetMs } = {}) {
 	if (!rtpReceiver) return;
 
 	// Chromium Insertable Streams 경로 (demo의 e2e도 이걸 사용)
@@ -147,11 +291,22 @@ function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency } 
 						const SFUrecvMs = dv.getFloat64(16, true);
 						const SFUsendMs = dv.getFloat64(24, true);
 
+						const offsetMs = typeof getViewerToSfuOffsetMs === 'function'
+							? getViewerToSfuOffsetMs()
+							: 0;
 						const PtoS = SFUrecvMs - sendTsMs;
-						const StoC = recvTsMs - SFUsendMs;
+						// 기존: const StoC = recvTsMs - SFUsendMs;
+						const StoC = (recvTsMs + offsetMs) - SFUsendMs;
+						const StoC2 = recvTsMs  - SFUsendMs;
+
+						if (latencyMeasurementState.active) {
+							latencyMeasurementState.ptoS.push(PtoS);
+							latencyMeasurementState.stoC.push(StoC);
+							latencyMeasurementState.lastFrameId = FrameID;
+						}
 
 						if (FrameID % 30 == 0) {
-							logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, second=${StoC.toFixed(2)}ms`);
+							logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, SFUsendMs=${SFUsendMs.toFixed(2)}ms, second=${StoC.toFixed(2)}ms, fake = ${StoC2.toFixed(2)}ms, offset = ${offsetMs.toFixed(2)}ms`);
 
 							try {
 								onLatency?.({ StoC });
@@ -409,12 +564,33 @@ export default class RoomClient {
 		// @type {mediasoupClient.DataProducer}
 		this._botDataProducer = null;
 
-		// 추가: ltn data producer
+
+		//// yeon ////
+		// yeon 추가: ltn data producer
 		this._ltnDataProducer = null;
+
+		// yeon 추가: Local sync DataProducer.
+		this._syncDataProducer = null;
+
+		// Viewer -> SFU offset(ms). 즉, viewer timestamp + offset = sfu timestamp
+		this._viewerToSfuOffsetMs = 0;
+
+		// 최근 sync 샘플 관리
+		this._syncSeq = 0;
+		this._pendingSyncRequests = new Map(); // seq -> { t1ViewMs, sentAtMonoMs }
+
+		// 품질 추적
+		this._lastSyncRttMs = null;
+		this._lastSyncUpdatedAt = null;
+		//// yeon ////
 
 		// mediasoup Consumers.
 		// @type {Map<String, mediasoupClient.Consumer>}
 		this._consumers = new Map();
+
+		// yun: receiver -> { consumerId, producerId } mapping
+		// @type {Map<RTCRtpReceiver, Object>}
+		this._receiverConsumerMap = new Map();
 
 		// mediasoup DataConsumers.
 		// @type {Map<String, mediasoupClient.DataConsumer>}
@@ -442,6 +618,7 @@ export default class RoomClient {
 		if (this._closed) return;
 
 		this._closed = true;
+		this.stopSyncLoop();
 
 		logger.debug('close()');
 
@@ -462,6 +639,49 @@ export default class RoomClient {
 		store.dispatch(stateActions.setRoomState('closed'));
 	}
 
+	//yeon
+	_handleSyncResponse(data) {
+		const { seq, t2SfuMs } = data;
+		const pending = this._pendingSyncRequests.get(seq);
+
+		if (!pending) {
+			logger.warn('[sync] response for unknown seq:%s', seq);
+			return;
+		}
+
+		this._pendingSyncRequests.delete(seq);
+
+		const t3ViewMs = nowEpochMs();
+		const t1ViewMs = pending.t1ViewMs;
+		const rttMs = t3ViewMs - t1ViewMs;
+		const offsetMs = computeViewerToSfuOffsetMs({
+			t1ViewMs,
+			t2SfuMs,
+			t3ViewMs
+		});
+
+		if (this._lastSyncRttMs == null || rttMs <= this._lastSyncRttMs) {
+			this._viewerToSfuOffsetMs = offsetMs;
+		}
+		else {
+			this._viewerToSfuOffsetMs =
+				(this._viewerToSfuOffsetMs * 0.8) + (offsetMs * 0.2);
+		}
+
+		this._lastSyncRttMs = rttMs;
+		this._lastSyncUpdatedAt = Date.now();
+
+		console.log(
+			`[sync] seq=${seq} rttMs=${rttMs.toFixed(3)} offsetMs=${this._viewerToSfuOffsetMs.toFixed(3)}`
+		);
+
+		logger.debug(
+			'[sync] updated [seq:%s, rttMs:%f, offsetMs:%f]',
+			seq,
+			rttMs,
+			this._viewerToSfuOffsetMs
+		);
+	}
 	// yeon
 	_ensurePeerExists(peerId, { appData } = {}) {
 		if (!peerId) return;
@@ -596,7 +816,7 @@ export default class RoomClient {
 								// webcam streams from the same remote peer.
 								streamId: `${peerId}-${appData.source === 'screensharing' ? 'screensharing' : 'audio-video'}`,
 								onRtpReceiver: (rtpReceiver) => {
-								// video만 측정하고 싶다면: if (kind !== 'video') return;
+									// video만 측정하고 싶다면: if (kind !== 'video') return;
 									setupReceiverLatency(rtpReceiver, {
 										logger,
 										logEvery: 60,
@@ -612,21 +832,32 @@ export default class RoomClient {
 											// DataProducer
 											try { this.sendLtnMessage(msg); }
 											catch (e) { logger?.warn?.('[latency] sendLtnMessage failed:', e); }
-										}
+										},
+										getViewerToSfuOffsetMs: () => this._viewerToSfuOffsetMs
 									});
 								},
 								appData: { ...appData, peerId },
 							});
 							//logger
 
+
+							if (consumer.kind === 'video' && consumer.rtpReceiver) {
+								this._receiverConsumerMap.set(consumer.rtpReceiver, {
+									consumerId: consumer.id,
+									producerId: producerId
+								});
+							}
+
 							if (this._e2eKey && e2e.isSupported()) {
 								e2e.setupReceiverTransform(consumer.rtpReceiver);
 							}
-							
+
 							// Store in the map.
 							this._consumers.set(consumer.id, consumer);
 
 							consumer.on('transportclose', () => {
+								if (consumer.rtpReceiver)
+									this._receiverConsumerMap.delete(consumer.rtpReceiver);
 								this._consumers.delete(consumer.id);
 							});
 
@@ -828,6 +1059,39 @@ export default class RoomClient {
 
 										break;
 									}
+
+									//yeon: sync packet 처리 분기
+									case 'sync': {
+										const data = safeJsonParse(message);
+
+										if (!data || !data.type) {
+											logger.warn('[sync] invalid sync message:%o', message);
+											break;
+										}
+
+										switch (data.type) {
+											case 'sync_resp': {
+												this._handleSyncResponse(data);
+												break;
+											}
+
+											// SFU가 viewer에게 sync_req를 보내는 구조도 나중에 원하면 확장 가능
+											case 'sync_req': {
+												// viewer-initiated 구조를 쓸 거면 여기서는 보통 안 씀
+												logger.debug('[sync] unexpected sync_req on viewer');
+												break;
+											}
+
+											default: {
+												logger.warn('[sync] unknown sync message type:%s', data.type);
+												break;
+											}
+										}
+
+										break;
+									}
+
+
 								}
 							});
 
@@ -1391,7 +1655,8 @@ export default class RoomClient {
 						{
 							scaleResolutionDownBy: 1,
 							maxBitrate: 5000000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						},
 					];
 
@@ -1399,7 +1664,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 2,
 							maxBitrate: 1000000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						});
 					}
 
@@ -1407,7 +1673,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 4,
 							maxBitrate: 500000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						});
 					}
 				}
@@ -2263,6 +2530,63 @@ export default class RoomClient {
 		}
 	}
 
+
+	async enableSyncDataProducer() {
+		logger.debug('enableSyncDataProducer()');
+
+		try {
+			this._syncDataProducer = await this._sendTransport.produceData({
+				ordered: true,
+				label: 'sync',
+				priority: 'medium',
+				appData: { channel: 'sync' },
+			});
+
+			store.dispatch(
+				stateActions.addDataProducer({
+					id: this._syncDataProducer.id,
+					sctpStreamParameters: this._syncDataProducer.sctpStreamParameters,
+					label: this._syncDataProducer.label,
+					protocol: this._syncDataProducer.protocol,
+				})
+			);
+
+			this._syncDataProducer.on('transportclose', () => {
+				this._syncDataProducer = null;
+			});
+
+			this._syncDataProducer.on('open', () => {
+				logger.debug('sync DataProducer "open" event');
+			});
+
+			this._syncDataProducer.on('close', () => {
+				logger.error('sync DataProducer "close" event');
+				this._syncDataProducer = null;
+			});
+
+			this._syncDataProducer.on('error', (error) => {
+				logger.error('sync DataProducer "error" event:%o', error);
+			});
+
+			this._syncDataProducer.on('bufferedamountlow', () => {
+				logger.debug('sync DataProducer "bufferedamountlow" event');
+			});
+		}
+		catch (error) {
+			logger.error('enableSyncDataProducer() | failed:%o', error);
+
+			store.dispatch(
+				requestActions.notify({
+					type: 'error',
+					text: `Error enabling sync DataProducer: ${error}`,
+				})
+			);
+
+			throw error;
+		}
+	}
+
+	// yeon //
 	async sendLtnMessage(latency) {
 		//logger.debug('sendLtnMessage() [latency:]');
 		if (!this._ltnDataProducer) {
@@ -2289,6 +2613,59 @@ export default class RoomClient {
 			);
 		}
 	}
+
+
+	sendSyncMessage(message) {
+		if (!this._syncDataProducer)
+			throw new Error('no sync DataProducer');
+
+		this._syncDataProducer.send(message);
+	}
+
+	sendSyncProbe() {
+		if (!this._syncDataProducer)
+			return;
+
+		const seq = ++this._syncSeq;
+		const t1ViewMs = nowEpochMs();
+
+		this._pendingSyncRequests.set(seq, {
+			t1ViewMs,
+			sentAtMonoMs: t1ViewMs
+		});
+
+		const msg = JSON.stringify({
+			type: 'sync_req',
+			seq,
+			t1ViewMs
+		});
+
+		try {
+			this.sendSyncMessage(msg);
+		}
+		catch (e) {
+			logger.warn('[sync] sendSyncProbe failed:%o', e);
+			this._pendingSyncRequests.delete(seq);
+		}
+	}
+
+	// startSyncLoop(intervalMs = 1000) {
+	// 	this.stopSyncLoop();
+
+	// 	this._syncInterval = setInterval(() => {
+	// 		this.sendSyncProbe();
+	// 	}, intervalMs);
+
+	// 	logger.debug('[sync] sync loop started [intervalMs:%d]', intervalMs);
+	// }
+
+	// stopSyncLoop() {
+	// 	if (this._syncInterval) {
+	// 		clearInterval(this._syncInterval);
+	// 		this._syncInterval = null;
+	// 	}
+	// }
+	// yeon //
 
 	async sendChatMessage(text) {
 		logger.debug('sendChatMessage() [text:"%s]', text);
@@ -2787,6 +3164,9 @@ export default class RoomClient {
 						: undefined,
 			});
 
+			//yeon: sync를 위한 루프 시작
+			this.startSyncLoop(2000);
+
 			store.dispatch(stateActions.setRoomState('connected'));
 
 			// Clean all the existing notifcations.
@@ -2841,6 +3221,11 @@ export default class RoomClient {
 					this.enableChatDataProducer();
 					this.enableBotDataProducer();
 					this.enableLtnDataProducer();
+					this.enableSyncDataProducer();
+
+					// //viewer라면 sync 시작
+					// if (role === 'viewer')
+					// 	this.sync request(10000);
 				}
 			}
 
@@ -2926,6 +3311,176 @@ export default class RoomClient {
 		consumer.resume();
 
 		store.dispatch(stateActions.setConsumerResumed(consumer.id, 'local'));
+	}
+
+	// yeon
+	async sendSyncOnce() {
+		//console.log('[sync] sendSyncOnce called');
+
+		if (!this._protoo) {
+			console.log('[sync] no protoo');
+			return;
+		}
+
+		if (this._protoo.closed) {
+			console.log('[sync] protoo closed');
+			return;
+		}
+
+		const pc = this._recvTransport?._handler?._pc;
+		if (!pc) {
+			console.log('[sync] no recv pc yet');
+			return;
+		}
+
+		const receivers = pc.getReceivers();
+		//console.log('[sync] receivers length =', receivers.length);
+
+		let consumerId;
+
+		for (const receiver of receivers) {
+			//console.log('[sync] receiver track kind =', receiver.track?.kind);
+
+			if (!receiver.track || receiver.track.kind !== 'video')
+				continue;
+
+			const meta = this._receiverConsumerMap.get(receiver);
+			//console.log('[sync] receiver meta =', meta);
+
+			if (!meta)
+				continue;
+
+			consumerId = meta.consumerId;
+			break;
+		}
+
+		if (!consumerId) {
+			console.log('[sync] no video consumerId available yet');
+			return;
+		}
+
+		const seq = ++this._syncSeq;
+		const t1ViewMs = nowEpochMs();
+
+		this._pendingSyncRequests.set(seq, {
+			t1ViewMs,
+			sentAtMonoMs: t1ViewMs
+		});
+
+		//console.log('[sync] sending request', { consumerId, seq, t1ViewMs });
+
+		try {
+			const response = await this._protoo.request('sync', {
+				consumerId,
+				seq,
+				t1ViewMs
+			});
+
+			console.log('[sync] response received', response);
+
+			this._handleSyncResponse(response);
+
+			console.log('[sync] updated', {
+				consumerId,
+				seq,
+				offsetMs: this._viewerToSfuOffsetMs,
+				rttMs: this._lastSyncRttMs,
+				updatedAt: this._lastSyncUpdatedAt
+			});
+		}
+		catch (error) {
+			this._pendingSyncRequests.delete(seq);
+			console.warn('[sync] request failed', error);
+		}
+	}
+	//yeon
+	startSyncLoop(intervalMs = 2000) {
+		if (this._syncTimer)
+			return;
+		if (role !== 'viewer') {
+			return;
+		}
+
+		logger.debug('startSyncLoop()');
+
+		this.sendSyncOnce().catch(() => { });
+
+		console.log('[sync] startSyncLoop called');
+
+		this._syncTimer = setInterval(() => {
+			console.log('[sync] interval tick');
+			this.sendSyncOnce().catch(() => { });
+		}, intervalMs);
+	}
+
+	stopSyncLoop() {
+		if (this._syncTimer) {
+			clearInterval(this._syncTimer);
+			this._syncTimer = null;
+		}
+	}
+
+	// yun
+	_startDeadlineReporting() {
+		if (this._deadlineTimer)
+			return;
+
+		logger.debug('_startDeadlineReporting()');
+
+		this._deadlineTimer = setInterval(() => {
+			const pc = this._recvTransport?._handler?._pc;
+			if (!pc || !this._protoo || this._protoo.closed)
+				return;
+
+			for (const receiver of pc.getReceivers()) {
+				if (!receiver.track || receiver.track.kind !== 'video')
+					continue;
+
+				const meta = this._receiverConsumerMap.get(receiver);
+				if (!meta)
+					continue;
+
+				const d = receiver.getSampledLatestDecodeDeadline?.();
+				if (!d)
+					continue;
+
+				logger.debug('recv-deadline sample [consumerId:%s, producerId:%s, rtpTimestamp:%s, latestDecodeTimeNtp:%s, oneWayDelay:%s]',
+					meta.consumerId,
+					meta.producerId,
+					d.rtpTimestamp,
+					d.latestDecodeTimeNtp,
+					oneWayDelay
+				);
+
+				// yun
+				console.log('[deadline-debug]',
+					' consumerId=', meta.consumerId,
+					' producerId=', meta.producerId,
+					' rtpTimestamp=', d.rtpTimestamp,
+					' latestDecodeTimeNtp=', d.latestDecodeTimeNtp,
+					' oneWayDelay=', oneWayDelay
+				);
+
+				this._protoo.notify('recv-deadline', {
+					consumerId: meta.consumerId,
+					producerId: meta.producerId,
+					rtpTimestamp: d.rtpTimestamp,
+					latestDecodeTimeNtp: d.latestDecodeTimeNtp,
+					oneWayDelay: oneWayDelay
+				});
+			}
+		}, 1000);
+	}
+
+	// yun
+	_stopDeadlineReportingIfUnused() {
+		if (this._receiverConsumerMap.size > 0)
+			return;
+
+		if (this._deadlineTimer) {
+			clearInterval(this._deadlineTimer);
+			this._deadlineTimer = null;
+		}
 	}
 
 	async _getExternalVideoStream() {

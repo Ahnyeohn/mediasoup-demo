@@ -1707,7 +1707,8 @@ export default class RoomClient {
 						{
 							scaleResolutionDownBy: 1,
 							maxBitrate: 5000000,
-							scalabilityMode: this._sharingScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 							dtx: true,
 						},
 					];
@@ -1716,7 +1717,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 2,
 							maxBitrate: 1000000,
-							scalabilityMode: this._sharingScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 							dtx: true,
 						});
 					}
@@ -1725,7 +1727,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 4,
 							maxBitrate: 500000,
-							scalabilityMode: this._sharingScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 							dtx: true,
 						});
 					}

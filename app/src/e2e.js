@@ -73,9 +73,10 @@ export function setupSenderTransform(sender) {
 	);
 }
 
-export function setupReceiverTransform(receiver) {
+// yun: for sending deadline(latest_decode_time)
+//export function setupReceiverTransform(receiver) {
+export function setupReceiverTransform(receiver, { protoo } = {}) {
 	logger.debug('setupReceiverTransform()');
-
 	assertSupported();
 
 	const receiverStreams = receiver.createEncodedStreams();
@@ -84,6 +85,46 @@ export function setupReceiverTransform(receiver) {
 	const writableStream =
 		receiverStreams.writable || receiverStreams.writableStream;
 
+	worker.addEventListener('message', async ({ data }) => {
+		if (!data)
+			return;
+		if (data.type === 'rtp-timestamp') {
+			const { consumerId, rtpTimestamp } = data;
+
+			try {
+				const result = await window.__printDeadline?.(consumerId, rtpTimestamp);
+				if (!result)
+					return;
+
+				console.log('[deadline-debug] auto matched', {
+					consumerId,
+					rtpTimestamp,
+					latestDecodeTimeNtp: String(result.latestDecodeTimeNtp)
+				});
+
+				// if (protoo && !protoo.closed) {
+				// 	protoo.notify('recv-deadline', {
+				// 		consumerId,
+				// 		rtpTimestamp: result.rtpTimestamp,
+				// 		latestDecodeTimeNtp: String(result.latestDecodeTimeNtp)
+				// 	});
+				// }
+			} catch (error) {
+				console.error('[deadline-debug] auto match failed', {
+					consumerId,
+					rtpTimestamp,
+					error
+				});
+			}
+
+			return;
+		}
+
+		if (data.type === 'deadline-worker-error') {
+			console.error('[deadline-debug] worker error', data);
+		}
+	});
+	
 	worker.postMessage(
 		{
 			operation: 'decode',
