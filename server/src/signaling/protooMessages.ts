@@ -83,7 +83,17 @@ type NotificationFromPeer =
 	| {
 			name: 'changeDisplayName';
 			data: { displayName: string };
-	  };
+	  }
+	// | {
+	// 		name: 'recv-deadline';
+	// 		data: {
+	// 			consumerId: string;
+	// 			producerId: string;
+	// 			rtpTimestamp: number;
+	// 			latestDecodeTimeNtp: string;
+	// 			oneWayDelay: number;
+	// 		};
+	// 	}
 
 export type NotificationNameFromPeer =
 	keyof NotificationNameDataMap<NotificationFromPeer>;
@@ -208,6 +218,18 @@ type RequestFromPeer =
 			name: 'stopNetworkThrottle';
 			data: {
 				secret: string;
+			};
+	  }
+	| {
+			name: 'sync';
+			data: {
+				consumerId: string;
+				seq: number;
+				t1ViewMs: number;
+			};
+			responseData: {
+				seq: number;
+				t2SfuMs: number;
 			};
 	  };
 

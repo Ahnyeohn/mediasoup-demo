@@ -253,7 +253,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 			remoteAddress: this.#remoteAddress,
 		};
 	}
-	
+
 	getProducers(): mediasoupTypes.Producer<ProducerAppData>[] {
 		return Array.from(this.#producers.values());
 	}
@@ -750,6 +750,57 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 				break;
 			}
 
+			// yun
+			// case 'recv-deadline': {
+			// 	const { consumerId, producerId, rtpTimestamp, latestDecodeTimeNtp, oneWayDelay } = data;
+
+			// 	const consumer = this.#consumers.get(consumerId);
+			// 	if (!consumer) {
+			// 		this.#logger.warn('recv-deadline for unknown consumerId:%s', consumerId);
+			// 		break;
+			// 	}
+
+			// 	await consumer.setRecvDeadline({
+			// 		producerId,
+			// 		rtpTimestamp,
+			// 		latestDecodeTimeNtp,
+			// 		oneWayDelay
+			// 	});
+
+			// 	this.#logger.info(
+			// 		'recv-deadline [peerId:%s, consumerId:%s, producerId:%s, rtpTimestamp:%s, latestDecodeTimeNtp:%s, oneWayDelay:%s]',
+			// 		this.#protooPeer.id,
+			// 		consumerId,
+			// 		producerId,
+			// 		rtpTimestamp,
+			// 		latestDecodeTimeNtp,
+			// 		oneWayDelay
+			// 	);
+
+			// 	break;
+			// }
+
+			// case 'sync': {
+			// 	const { seq } = data;
+
+			// 	// 서버 기준 시각(ms)
+			// 	const t2SfuMs = Date.now();
+
+			// 	this.#logger.debug(
+			// 		'sync request [peerId:%s, seq:%s, t2SfuMs:%s]',
+			// 		this.#protooPeer.id,
+			// 		seq,
+			// 		t2SfuMs
+			// 	);
+
+			// 	accept({
+			// 		seq,
+			// 		t2SfuMs
+			// 	});
+
+			// 	break;
+			// }
+
 			default: {
 				assertUnreachable('protoo notification method', method);
 			}
@@ -797,7 +848,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 				const { direction } = appData;
 				const transport = await new Promise<
 					mediasoupTypes.WebRtcTransport<WebRtcTransportAppData>
-					// eslint-disable-next-line no-shadow
+				// eslint-disable-next-line no-shadow
 				>((resolve, reject) => {
 					this.emit(
 						'create-webrtc-transport',
@@ -965,6 +1016,55 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 				const { secret } = data;
 
 				this.emit('stop-network-throttle', { secret }, accept, reject);
+
+				break;
+			}
+			//yeon
+			// case 'sync': {
+			// 	const { seq, t1ViewMs } = data;
+
+			// 	// 서버 시각(ms). 서버 기준 clock
+			// 	const t2SfuMs = Date.now();
+
+			// 	this.#logger.debug(
+			// 		'sync request [peerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
+			// 		this.#protooPeer.id,
+			// 		seq,
+			// 		t1ViewMs,
+			// 		t2SfuMs
+			// 	);
+
+			// 	accept({
+			// 		seq,
+			// 		t2SfuMs
+			// 	});
+
+			// 	break;
+			// }
+			
+			case 'sync': {
+				const { consumerId, seq, t1ViewMs } = data;
+
+				//const consumer = this.#consumers.get(consumerId);
+				const consumer = this.assertAndGetConsumer(consumerId);
+				if (!consumer)
+					throw new ConsumerNotFound(`consumer not found [consumerId:${consumerId}]`);
+
+				const t2SfuMs = await consumer.getSyncClock();
+
+				// this.#logger.debug(
+				// 	'sync request [peerId:%s, consumerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
+				// 	this.#protooPeer.id,
+				// 	consumerId,
+				// 	seq,
+				// 	t1ViewMs,
+				// 	t2SfuMs
+				// );
+
+				accept({
+					seq,
+					t2SfuMs
+				});
 
 				break;
 			}
