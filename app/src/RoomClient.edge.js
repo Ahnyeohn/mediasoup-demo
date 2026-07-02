@@ -168,12 +168,6 @@ function nowEpochMs() {
 	//return Date.now();
 }
 
-// yeon
-// ===== Sync helpers =====
-function nowMonoMs() {
-	// Viewer 로컬 monotonic clock 기준(ms)
-	return performance.now();
-}
 function safeJsonParse(message) {
 	if (typeof message !== 'string')
 		return null;
@@ -297,7 +291,7 @@ function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency, g
 						const PtoS = SFUrecvMs - sendTsMs;
 						// 기존: const StoC = recvTsMs - SFUsendMs;
 						const StoC = (recvTsMs + offsetMs) - SFUsendMs;
-						const StoC2 = recvTsMs  - SFUsendMs;
+						const StoC2 = recvTsMs - SFUsendMs;
 
 						if (latencyMeasurementState.active) {
 							latencyMeasurementState.ptoS.push(PtoS);
@@ -306,7 +300,7 @@ function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency, g
 						}
 
 						if (FrameID % 30 == 0) {
-							logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, SFUsendMs=${SFUsendMs.toFixed(2)}ms, second=${StoC.toFixed(2)}ms, fake = ${StoC2.toFixed(2)}ms, offset = ${offsetMs.toFixed(2)}ms`);
+							//logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, SFUsendMs=${SFUsendMs.toFixed(2)}ms, second=${StoC.toFixed(2)}ms, fake = ${StoC2.toFixed(2)}ms, offset = ${offsetMs.toFixed(2)}ms`);
 
 							try {
 								onLatency?.({ StoC });
@@ -334,6 +328,180 @@ function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency, g
 		.catch((e) => logger?.warn?.('[latency] pipeTo failed:', e));
 
 	logger?.debug?.('[latency] Receiver latency probe installed');
+}
+
+function safeDelta(current, previous) {
+	if (current === undefined || previous === undefined) {
+		return null;
+	}
+
+	return current - previous;
+}
+
+function findInboundVideoStats(report) {
+	let inbound = null;
+
+	report.forEach((stat) => {
+		if (
+			stat.type === 'inbound-rtp' &&
+			!stat.isRemote &&
+			(stat.kind === 'video' || stat.mediaType === 'video')
+		) {
+			inbound = stat;
+		}
+	});
+
+	return inbound;
+}
+
+function startVideoStatsMonitor(consumer, { logger, onStats, intervalMs = 1000 } = {}) {
+	if (!consumer || consumer.kind !== 'video' || !consumer.rtpReceiver) {
+		return () => { };
+	}
+
+	let last = null;
+
+	const timer = setInterval(async () => {
+		try {
+			const report = await consumer.rtpReceiver.getStats();
+			const inbound = findInboundVideoStats(report);
+
+			if (!inbound) {
+				return;
+			}
+
+			const now = inbound.timestamp;
+
+			let derived = {};
+
+			if (last) {
+				const dtSec = (now - last.timestamp) / 1000;
+
+				const deltaFramesReceived =
+					safeDelta(inbound.framesReceived, last.framesReceived);
+
+				const deltaFramesDecoded =
+					safeDelta(inbound.framesDecoded, last.framesDecoded);
+
+				const deltaFramesDropped =
+					safeDelta(inbound.framesDropped, last.framesDropped);
+
+				const deltaBytesReceived =
+					safeDelta(inbound.bytesReceived, last.bytesReceived);
+
+				const deltaPacketsReceived =
+					safeDelta(inbound.packetsReceived, last.packetsReceived);
+
+				const deltaPacketsLost =
+					safeDelta(inbound.packetsLost, last.packetsLost);
+
+				const deltaNack =
+					safeDelta(inbound.nackCount, last.nackCount);
+
+				const deltaJitterBufferDelay =
+					safeDelta(inbound.jitterBufferDelay, last.jitterBufferDelay);
+
+				const deltaJitterBufferEmittedCount =
+					safeDelta(
+						inbound.jitterBufferEmittedCount,
+						last.jitterBufferEmittedCount
+					);
+
+				const deltaJitterBufferTargetDelay =
+					safeDelta(
+						inbound.jitterBufferTargetDelay,
+						last.jitterBufferTargetDelay
+					);
+
+				const packetsTotal =
+					(deltaPacketsReceived ?? 0) + (deltaPacketsLost ?? 0);
+
+				derived = {
+					recvFps:
+						deltaFramesReceived !== null && dtSec > 0
+							? deltaFramesReceived / dtSec
+							: null,
+
+					decodedFps:
+						deltaFramesDecoded !== null && dtSec > 0
+							? deltaFramesDecoded / dtSec
+							: null,
+
+					droppedFps:
+						deltaFramesDropped !== null && dtSec > 0
+							? deltaFramesDropped / dtSec
+							: null,
+
+					bitrateMbps:
+						deltaBytesReceived !== null && dtSec > 0
+							? (deltaBytesReceived * 8) / dtSec / 1000000
+							: null,
+
+					packetLossRate:
+						packetsTotal > 0
+							? (deltaPacketsLost ?? 0) / packetsTotal
+							: null,
+
+					nackPerSec:
+						deltaNack !== null && dtSec > 0
+							? deltaNack / dtSec
+							: null,
+
+					avgJitterBufferDelayMs:
+						deltaJitterBufferDelay !== null &&
+							deltaJitterBufferEmittedCount > 0
+							? (deltaJitterBufferDelay / deltaJitterBufferEmittedCount) * 1000
+							: null,
+
+					avgJitterBufferTargetDelayMs:
+						deltaJitterBufferTargetDelay !== null &&
+							deltaJitterBufferEmittedCount > 0
+							? (deltaJitterBufferTargetDelay / deltaJitterBufferEmittedCount) * 1000
+							: null
+				};
+			}
+
+			const stats = {
+				consumerId: consumer.id,
+
+				framesReceived: inbound.framesReceived ?? null,
+				framesDecoded: inbound.framesDecoded ?? null,
+				framesDropped: inbound.framesDropped ?? null,
+				framesPerSecond: inbound.framesPerSecond ?? null,
+
+				frameWidth: inbound.frameWidth ?? null,
+				frameHeight: inbound.frameHeight ?? null,
+
+				jitterMs:
+					inbound.jitter !== undefined
+						? inbound.jitter * 1000
+						: null,
+
+				jitterBufferDelay: inbound.jitterBufferDelay ?? null,
+				jitterBufferEmittedCount: inbound.jitterBufferEmittedCount ?? null,
+				jitterBufferTargetDelay: inbound.jitterBufferTargetDelay ?? null,
+
+				packetsReceived: inbound.packetsReceived ?? null,
+				packetsLost: inbound.packetsLost ?? null,
+				nackCount: inbound.nackCount ?? null,
+				pliCount: inbound.pliCount ?? null,
+				firCount: inbound.firCount ?? null,
+
+				bytesReceived: inbound.bytesReceived ?? null,
+
+				...derived
+			};
+
+			onStats?.(stats);
+
+			last = inbound;
+		}
+		catch (error) {
+			logger?.warn?.('[video-stats] getStats failed:%o', error);
+		}
+	}, intervalMs);
+
+	return () => clearInterval(timer);
 }
 
 export default class RoomClient {
@@ -596,6 +764,9 @@ export default class RoomClient {
 		// @type {Map<String, mediasoupClient.DataConsumer>}
 		this._dataConsumers = new Map();
 
+		// yeon: 클라이언트 지표 수집/표시
+		this._videoStatsMonitors = new Map();
+
 		// Map of webcam MediaDeviceInfos indexed by deviceId.
 		// @type {Map<String, MediaDeviceInfos>}
 		this._webcams = new Map();
@@ -839,8 +1010,6 @@ export default class RoomClient {
 								appData: { ...appData, peerId },
 							});
 							//logger
-
-
 							if (consumer.kind === 'video' && consumer.rtpReceiver) {
 								this._receiverConsumerMap.set(consumer.rtpReceiver, {
 									consumerId: consumer.id,
@@ -855,9 +1024,49 @@ export default class RoomClient {
 							// Store in the map.
 							this._consumers.set(consumer.id, consumer);
 
+							// yeon: 플레이어 지표 수집/표시
+							if (consumer.kind === 'video' && consumer.rtpReceiver) {
+								const stopStatsMonitor = startVideoStatsMonitor(consumer, {
+									logger,
+									intervalMs: 1000,
+									onStats: (stats) => {
+
+										store.dispatch(
+											stateActions.setConsumerVideoStats(consumer.id, stats)
+										);
+										// window.VIDEO_STATS = window.VIDEO_STATS || {};
+										// window.VIDEO_STATS[consumer.id] = stats;
+							
+										console.log(
+											`[video-stats] ` +
+											`consumer=${consumer.id}, ` +
+											`fps=${stats.framesPerSecond ?? stats.decodedFps}, ` +
+											`decoded=${stats.framesDecoded}, ` +
+											`dropped=${stats.framesDropped}, ` +
+											`res=${stats.frameWidth}x${stats.frameHeight}, ` +
+											`jitter=${stats.jitterMs?.toFixed?.(2)}ms, ` +
+											`jbd=${stats.avgJitterBufferDelayMs?.toFixed?.(2)}ms, ` +
+											`lost=${stats.packetsLost}, ` +
+											`nack=${stats.nackCount}, ` +
+											`bitrate=${stats.bitrateMbps?.toFixed?.(2)}Mbps`
+										);
+									}
+								});
+							
+								this._videoStatsMonitors.set(consumer.id, stopStatsMonitor);
+							}
+
 							consumer.on('transportclose', () => {
 								if (consumer.rtpReceiver)
 									this._receiverConsumerMap.delete(consumer.rtpReceiver);
+
+								const stopStatsMonitor = this._videoStatsMonitors.get(consumer.id);
+
+								if (stopStatsMonitor) {
+									stopStatsMonitor();
+									this._videoStatsMonitors.delete(consumer.id);
+								}
+
 								this._consumers.delete(consumer.id);
 							});
 
@@ -1216,6 +1425,13 @@ export default class RoomClient {
 							);
 
 							return;
+						}
+
+						const stopStatsMonitor = this._videoStatsMonitors.get(consumerId);
+
+						if (stopStatsMonitor) {
+							stopStatsMonitor();
+							this._videoStatsMonitors.delete(consumerId);
 						}
 
 						consumer.close();
@@ -3165,7 +3381,10 @@ export default class RoomClient {
 			});
 
 			//yeon: sync를 위한 루프 시작
-			this.startSyncLoop(2000);
+			//this.startSyncLoop(2000);
+
+			// yun: recv&decode telemetry data channel
+			void this._createFrameTelemetryDataProducer();
 
 			store.dispatch(stateActions.setRoomState('connected'));
 
@@ -3245,6 +3464,140 @@ export default class RoomClient {
 			);
 
 			this.close();
+		}
+	}
+
+	async _createFrameTelemetryDataProducer() {
+		if (this._frameTelemetryDataProducer || this._frameTelemetrySendTransport) {
+			return;
+		}
+
+		logger.warn('[TELEMETRY] _createFrameTelemetryDataProducer()');
+
+		try {
+			const transportInfo = await this._protoo.request(
+				'createWebRtcTransport',
+				{
+					sctpCapabilities: this._mediasoupDevice.sctpCapabilities,
+					forceTcp: this._forceTcp,
+					appData: {
+						direction: 'producer',
+						channel: 'frame-telemetry',
+					},
+				}
+			);
+
+			const {
+				transportId,
+				iceParameters,
+				iceCandidates,
+				dtlsParameters,
+				sctpParameters,
+			} = transportInfo;
+
+			this._frameTelemetrySendTransport =
+				this._mediasoupDevice.createSendTransport({
+					id: transportId,
+					iceParameters,
+					iceCandidates,
+					dtlsParameters: {
+						...dtlsParameters,
+						role: 'auto',
+					},
+					sctpParameters,
+					iceServers: [],
+				});
+
+			logger.warn(
+				'[TELEMETRY] telemetry sendTransport created [id:%s]',
+				this._frameTelemetrySendTransport.id
+			);
+
+			this._frameTelemetrySendTransport.on(
+				'connect',
+				({ dtlsParameters: dtlsParameters2 }, callback, errback) => {
+					logger.warn('[TELEMETRY] telemetry sendTransport connect');
+
+					this._protoo
+						.request('connectWebRtcTransport', {
+							transportId: this._frameTelemetrySendTransport.id,
+							dtlsParameters: dtlsParameters2,
+						})
+						.then(callback)
+						.catch(errback);
+				}
+			);
+
+			this._frameTelemetrySendTransport.on(
+				'producedata',
+				(
+					{ sctpStreamParameters, label, protocol, appData },
+					callback,
+					errback
+				) => {
+					logger.warn(
+						'[TELEMETRY] producedata [label:%s, protocol:%s]',
+						label,
+						protocol
+					);
+
+					this._protoo
+						.request('produceData', {
+							transportId: this._frameTelemetrySendTransport.id,
+							sctpStreamParameters,
+							label,
+							protocol,
+							appData,
+						})
+						.then(({ dataProducerId }) => callback({ id: dataProducerId }))
+						.catch(errback);
+				}
+			);
+
+			logger.warn('[TELEMETRY] before frame telemetry produceData');
+
+			this._frameTelemetryDataProducer =
+				await this._frameTelemetrySendTransport.produceData({
+					ordered: false,
+					maxRetransmits: 0,
+					label: 'frame-telemetry',
+					protocol: 'telemetry',
+					priority: 'medium',
+					appData: { channel: 'frame-telemetry' },
+				});
+
+			logger.warn(
+				'[TELEMETRY] frame telemetry DataProducer created [id:%s, label:%s, protocol:%s]',
+				this._frameTelemetryDataProducer.id,
+				this._frameTelemetryDataProducer.label,
+				this._frameTelemetryDataProducer.protocol
+			);
+
+			this._frameTelemetryDataProducer.on('open', () => {
+				logger.warn('[TELEMETRY] frame telemetry DataProducer open');
+			});
+
+			this._frameTelemetryDataProducer.on('close', () => {
+				logger.warn('[TELEMETRY] frame telemetry DataProducer close');
+				this._frameTelemetryDataProducer = null;
+			});
+
+			this._frameTelemetryDataProducer.on('transportclose', () => {
+				logger.warn('[TELEMETRY] frame telemetry DataProducer transportclose');
+				this._frameTelemetryDataProducer = null;
+			});
+
+			this._frameTelemetryDataProducer.on('error', error => {
+				logger.error(
+					'[TELEMETRY] frame telemetry DataProducer error:%o',
+					error
+				);
+			});
+		} catch (error) {
+			logger.error(
+				'[TELEMETRY] _createFrameTelemetryDataProducer() failed:%o',
+				error
+			);
 		}
 	}
 

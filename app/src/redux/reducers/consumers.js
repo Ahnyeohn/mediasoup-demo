@@ -99,6 +99,23 @@ const consumers = (state = initialState, action) => {
 			return { ...state, [consumerId]: newConsumer };
 		}
 
+		case 'SET_CONSUMER_VIDEO_STATS': {
+			const { consumerId, videoStats } = action.payload;
+			const consumer = state[consumerId];
+		
+			if (!consumer) {
+				return state;
+			}
+		
+			return {
+				...state,
+				[consumerId]: {
+					...consumer,
+					videoStats
+				}
+			};
+		}
+
 		default: {
 			return state;
 		}

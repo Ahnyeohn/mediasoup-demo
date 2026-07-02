@@ -38,6 +38,11 @@ const Peer = props => {
 				peer={peer}
 				audioConsumerId={audioConsumer ? audioConsumer.id : null}
 				videoConsumerId={videoConsumer ? videoConsumer.id : null}
+
+				// yeon
+				videoStats={videoConsumer ? videoConsumer.videoStats : null}
+
+
 				audioRtpParameters={audioConsumer ? audioConsumer.rtpParameters : null}
 				videoRtpParameters={videoConsumer ? videoConsumer.rtpParameters : null}
 				consumerSpatialLayers={

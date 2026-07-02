@@ -17,6 +17,30 @@ const tinyFaceDetectorOptions = new faceapi.TinyFaceDetectorOptions({
 	scoreThreshold: 0.5,
 });
 
+function fmt(value, digits = 2) {
+	if (value === null || value === undefined || Number.isNaN(value)) {
+		return '-';
+	}
+
+	return Number(value).toFixed(digits);
+}
+
+function val(value) {
+	if (value === null || value === undefined) {
+		return '-';
+	}
+
+	return value;
+}
+
+function fmtPercent(value) {
+	if (value === null || value === undefined || Number.isNaN(value)) {
+		return '-';
+	}
+
+	return `${(value * 100).toFixed(2)}%`;
+}
+
 export default class PeerView extends React.Component {
 	constructor(props) {
 		super(props);
@@ -62,6 +86,7 @@ export default class PeerView extends React.Component {
 			videoProducerId,
 			audioConsumerId,
 			videoConsumerId,
+			videoStats, // yeon
 			videoRtpParameters,
 			consumerSpatialLayers,
 			consumerTemporalLayers,
@@ -466,6 +491,24 @@ export default class PeerView extends React.Component {
 					controls={false}
 				/>
 
+				{videoVisible && videoStats && (
+					<div className="video-stats-overlay">
+						<div>FPS dec: {fmt(videoStats.decodedFps ?? videoStats.framesPerSecond)}</div>
+						<div>FPS recv: {fmt(videoStats.recvFps)}</div>
+						<div>frames dec/drop: {val(videoStats.framesDecoded)} / {val(videoStats.framesDropped)}</div>
+						<div>res: {val(videoStats.frameWidth)}x{val(videoStats.frameHeight)}</div>
+						<div>layer cur: {val(consumerCurrentSpatialLayer)} / {val(consumerCurrentTemporalLayer)}</div>
+						<div>bitrate: {fmt(videoStats.bitrateMbps)} Mbps</div>
+						<div>jitter: {fmt(videoStats.jitterMs)} ms</div>
+						<div>JB delay: {fmt(videoStats.avgJitterBufferDelayMs)} ms</div>
+						<div>JB emitted: {val(videoStats.jitterBufferEmittedCount)}</div>
+						<div>lost/NACK: {val(videoStats.packetsLost)} / {val(videoStats.nackCount)}</div>
+						<div>
+							loss: {fmtPercent(videoStats.packetLossRate)}
+						</div>
+					</div>
+				)}
+
 				<audio
 					ref={this._audioElemRef}
 					autoPlay
@@ -747,6 +790,7 @@ PeerView.propTypes = {
 	videoProducerId: PropTypes.string,
 	audioConsumerId: PropTypes.string,
 	videoConsumerId: PropTypes.string,
+	videoStats: PropTypes.object, // yeon
 	audioRtpParameters: PropTypes.object,
 	videoRtpParameters: PropTypes.object,
 	consumerSpatialLayers: PropTypes.number,

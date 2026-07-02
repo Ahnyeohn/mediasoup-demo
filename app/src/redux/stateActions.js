@@ -312,3 +312,9 @@ export const removeAllNotifications = () => {
 		type: 'REMOVE_ALL_NOTIFICATIONS',
 	};
 };
+
+// yeon
+export const setConsumerVideoStats = (consumerId, videoStats) => ({
+	type: 'SET_CONSUMER_VIDEO_STATS',
+	payload: { consumerId, videoStats }
+});
