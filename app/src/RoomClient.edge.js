@@ -3440,7 +3440,7 @@ export default class RoomClient {
 					this.enableChatDataProducer();
 					this.enableBotDataProducer();
 					this.enableLtnDataProducer();
-					this.enableSyncDataProducer();
+					// this.enableSyncDataProducer();
 
 					// //viewer라면 sync 시작
 					// if (role === 'viewer')
