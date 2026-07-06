@@ -1042,32 +1042,32 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 			// 	break;
 			// }
 			
-			case 'sync': {
-				const { consumerId, seq, t1ViewMs } = data;
+			// case 'sync': {
+			// 	const { consumerId, seq, t1ViewMs } = data;
 
-				//const consumer = this.#consumers.get(consumerId);
-				const consumer = this.assertAndGetConsumer(consumerId);
-				if (!consumer)
-					throw new ConsumerNotFound(`consumer not found [consumerId:${consumerId}]`);
+			// 	//const consumer = this.#consumers.get(consumerId);
+			// 	const consumer = this.assertAndGetConsumer(consumerId);
+			// 	if (!consumer)
+			// 		throw new ConsumerNotFound(`consumer not found [consumerId:${consumerId}]`);
 
-				const t2SfuMs = await consumer.getSyncClock();
+			// 	const t2SfuMs = await consumer.getSyncClock();
 
-				// this.#logger.debug(
-				// 	'sync request [peerId:%s, consumerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
-				// 	this.#protooPeer.id,
-				// 	consumerId,
-				// 	seq,
-				// 	t1ViewMs,
-				// 	t2SfuMs
-				// );
+			// 	// this.#logger.debug(
+			// 	// 	'sync request [peerId:%s, consumerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
+			// 	// 	this.#protooPeer.id,
+			// 	// 	consumerId,
+			// 	// 	seq,
+			// 	// 	t1ViewMs,
+			// 	// 	t2SfuMs
+			// 	// );
 
-				accept({
-					seq,
-					t2SfuMs
-				});
+			// 	accept({
+			// 		seq,
+			// 		t2SfuMs
+			// 	});
 
-				break;
-			}
+			// 	break;
+			// }
 
 			default: {
 				// @ts-expect-error: Must be ready for this despite TS says it's ok.
