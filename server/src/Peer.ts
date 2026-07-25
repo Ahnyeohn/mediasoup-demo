@@ -160,6 +160,12 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 		new Map();
 	readonly #consumers: Map<string, mediasoupTypes.Consumer<ConsumerAppData>> =
 		new Map();
+	readonly #consumerBitrateTimers: Map<
+		string,
+		ReturnType<typeof setInterval>
+	> = new Map();
+
+
 	readonly #dataProducers: Map<
 		string,
 		mediasoupTypes.DataProducer<DataProducerAppData>
@@ -363,6 +369,11 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						// new stream once its PeerConnection is ready to process and
 						// associate it.
 						await consumer.resume();
+
+						// yeon: 실제 SFU -> Viewer 비디오 비트레이트 측정 시작.
+						// if (i === 0) {
+						// 	this.startConsumerBitrateMonitor(consumer, i);
+						// }
 
 						resolve();
 					} catch (error) {
@@ -780,27 +791,6 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 			// 	break;
 			// }
 
-			// case 'sync': {
-			// 	const { seq } = data;
-
-			// 	// 서버 기준 시각(ms)
-			// 	const t2SfuMs = Date.now();
-
-			// 	this.#logger.debug(
-			// 		'sync request [peerId:%s, seq:%s, t2SfuMs:%s]',
-			// 		this.#protooPeer.id,
-			// 		seq,
-			// 		t2SfuMs
-			// 	);
-
-			// 	accept({
-			// 		seq,
-			// 		t2SfuMs
-			// 	});
-
-			// 	break;
-			// }
-
 			default: {
 				assertUnreachable('protoo notification method', method);
 			}
@@ -1019,55 +1009,6 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 
 				break;
 			}
-			//yeon
-			// case 'sync': {
-			// 	const { seq, t1ViewMs } = data;
-
-			// 	// 서버 시각(ms). 서버 기준 clock
-			// 	const t2SfuMs = Date.now();
-
-			// 	this.#logger.debug(
-			// 		'sync request [peerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
-			// 		this.#protooPeer.id,
-			// 		seq,
-			// 		t1ViewMs,
-			// 		t2SfuMs
-			// 	);
-
-			// 	accept({
-			// 		seq,
-			// 		t2SfuMs
-			// 	});
-
-			// 	break;
-			// }
-			
-			// case 'sync': {
-			// 	const { consumerId, seq, t1ViewMs } = data;
-
-			// 	//const consumer = this.#consumers.get(consumerId);
-			// 	const consumer = this.assertAndGetConsumer(consumerId);
-			// 	if (!consumer)
-			// 		throw new ConsumerNotFound(`consumer not found [consumerId:${consumerId}]`);
-
-			// 	const t2SfuMs = await consumer.getSyncClock();
-
-			// 	// this.#logger.debug(
-			// 	// 	'sync request [peerId:%s, consumerId:%s, seq:%s, t1ViewMs:%s, t2SfuMs:%s]',
-			// 	// 	this.#protooPeer.id,
-			// 	// 	consumerId,
-			// 	// 	seq,
-			// 	// 	t1ViewMs,
-			// 	// 	t2SfuMs
-			// 	// );
-
-			// 	accept({
-			// 		seq,
-			// 		t2SfuMs
-			// 	});
-
-			// 	break;
-			// }
 
 			default: {
 				// @ts-expect-error: Must be ready for this despite TS says it's ok.
@@ -1124,10 +1065,117 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 		});
 	}
 
+	private startConsumerBitrateMonitor(
+		consumer: mediasoupTypes.Consumer<ConsumerAppData>,
+		replicaIndex: number
+	): void {
+		// 오디오는 제외하고 비디오만 측정.
+		if (consumer.kind !== 'video') {
+			return;
+		}
+
+		// 중복 타이머 방지.
+		this.stopConsumerBitrateMonitor(consumer.id);
+
+		const timer = setInterval(() => {
+			void (async () => {
+				if (consumer.closed) {
+					this.stopConsumerBitrateMonitor(consumer.id);
+
+					return;
+				}
+
+				try {
+					const stats = await consumer.getStats();
+
+					/*
+					 * Viewer 방향으로 실제 전송되는 RTP 스트림만 선택.
+					 *
+					 * consumer.getStats()에는 일반적으로:
+					 * - outbound-rtp: SFU -> Viewer
+					 * - inbound-rtp : 원본 Producer 쪽 통계
+					 * 가 함께 들어온다.
+					 */
+					const outboundStat = stats.find(
+						stat =>
+							stat.type === 'outbound-rtp' &&
+							stat.kind === 'video'
+					);
+
+					if (!outboundStat) {
+						this.#logger.warn(
+							'[viewer-bitrate] outbound video stat not found ' +
+							'[peerId:%s, consumerId:%s, replicaIndex:%d]',
+							this.#peerId,
+							consumer.id,
+							replicaIndex
+						);
+
+						return;
+					}
+
+					const bitrateBps = Number(outboundStat.bitrate ?? 0);
+					const currentLayers = consumer.currentLayers;
+
+					this.#logger.warn(
+						'[viewer-bitrate] ' +
+						'viewerPeerId=%s ' +
+						'consumerId=%s ' +
+						'producerId=%s ' +
+						'replicaIndex=%d ' +
+						'spatialLayer=%d ' +
+						'temporalLayer=%d ' +
+						'bitrateBps=%d ' +
+						'bitrateKbps=%s ' +
+						'bitrateMbps=%s ' +
+						'packetCount=%d ' +
+						'byteCount=%d ' +
+						'packetsRetransmitted=%d',
+						this.#peerId,
+						consumer.id,
+						consumer.producerId,
+						replicaIndex,
+						currentLayers?.spatialLayer ?? -1,
+						currentLayers?.temporalLayer ?? -1,
+						bitrateBps,
+						(bitrateBps / 1000).toFixed(1),
+						(bitrateBps / 1_000_000).toFixed(3),
+						Number(outboundStat.packetCount ?? 0),
+						Number(outboundStat.byteCount ?? 0),
+						Number(outboundStat.packetsRetransmitted ?? 0)
+					);
+				} catch (error) {
+					this.#logger.warn(
+						'[viewer-bitrate] consumer.getStats() failed ' +
+						'[peerId:%s, consumerId:%s, replicaIndex:%d]: %o',
+						this.#peerId,
+						consumer.id,
+						replicaIndex,
+						error
+					);
+				}
+			})();
+		}, 1000);
+
+		this.#consumerBitrateTimers.set(consumer.id, timer);
+	}
+
+	private stopConsumerBitrateMonitor(consumerId: string): void {
+		const timer = this.#consumerBitrateTimers.get(consumerId);
+
+		if (!timer) {
+			return;
+		}
+
+		clearInterval(timer);
+		this.#consumerBitrateTimers.delete(consumerId);
+	}
+
 	private handleConsumer(
 		consumer: mediasoupTypes.Consumer<ConsumerAppData>
 	): void {
 		consumer.observer.on('close', () => {
+			this.stopConsumerBitrateMonitor(consumer.id);
 			this.#consumers.delete(consumer.id);
 		});
 

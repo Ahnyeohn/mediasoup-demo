@@ -36,300 +36,6 @@ let store;
 // yun
 let oneWayDelay = 0;
 
-// yeon
-const latencyMeasurementState = {
-	active: false,
-	startedAt: null,
-	stoC: [],
-	ptoS: [],
-	lastFrameId: null,
-	logger: null
-};
-
-function percentileFromSorted(sorted, p) {
-	if (!sorted.length) return null;
-	if (p <= 0) return sorted[0];
-	if (p >= 100) return sorted[sorted.length - 1];
-
-	const idx = (p / 100) * (sorted.length - 1);
-	const lo = Math.floor(idx);
-	const hi = Math.ceil(idx);
-
-	if (lo === hi) return sorted[lo];
-
-	const frac = idx - lo;
-	return sorted[lo] * (1 - frac) + sorted[hi] * frac;
-}
-
-function computeBasicStats(values) {
-	if (!values || values.length === 0) return null;
-
-	const sorted = [...values].sort((a, b) => a - b);
-	const n = values.length;
-
-	let sum = 0;
-	let min = Infinity;
-	let max = -Infinity;
-
-	for (const v of values) {
-		sum += v;
-		if (v < min) min = v;
-		if (v > max) max = v;
-	}
-
-	const mean = sum / n;
-
-	let varianceAcc = 0;
-	for (const v of values) {
-		const d = v - mean;
-		varianceAcc += d * d;
-	}
-
-	return {
-		count: n,
-		min,
-		max,
-		mean,
-		median: percentileFromSorted(sorted, 50),
-		p95: percentileFromSorted(sorted, 95),
-		p99: percentileFromSorted(sorted, 99),
-		stddev: Math.sqrt(varianceAcc / n)
-	};
-}
-
-function printOneStats(logger, name, stats) {
-	if (!stats) {
-		console?.log?.(`[latency-summary] ${name}: no samples`);
-		return;
-	}
-
-	console?.log?.(
-		`[latency-summary] ${name}: ` +
-		`count=${stats.count}, ` +
-		`min=${stats.min.toFixed(2)}ms, ` +
-		`mean=${stats.mean.toFixed(2)}ms, ` +
-		`median=${stats.median.toFixed(2)}ms, ` +
-		`p95=${stats.p95.toFixed(2)}ms, ` +
-		`p99=${stats.p99.toFixed(2)}ms, ` +
-		`max=${stats.max.toFixed(2)}ms, ` +
-		`stddev=${stats.stddev.toFixed(2)}ms`
-	);
-}
-
-function startLatencyMeasurement(logger = console) {
-	latencyMeasurementState.active = true;
-	latencyMeasurementState.startedAt = Date.now();
-	latencyMeasurementState.stoC = [];
-	latencyMeasurementState.ptoS = [];
-	latencyMeasurementState.lastFrameId = null;
-	latencyMeasurementState.logger = logger;
-
-	//logger?.debug?.('[latency-control] measurement started');
-	console?.log?.('[latency-control] measurement started');
-}
-
-function stopLatencyMeasurement() {
-	const logger = latencyMeasurementState.logger || console;
-
-	if (!latencyMeasurementState.active) {
-		logger?.warn?.('[latency-control] measurement is not active');
-		return;
-	}
-
-	latencyMeasurementState.active = false;
-
-	const durationMs =
-		latencyMeasurementState.startedAt == null
-			? 0
-			: Date.now() - latencyMeasurementState.startedAt;
-
-	console?.log?.(
-		`[latency-summary] duration=${durationMs}ms, lastFrame=${latencyMeasurementState.lastFrameId}`
-	);
-
-	printOneStats(logger, 'PtoS', computeBasicStats(latencyMeasurementState.ptoS));
-	printOneStats(logger, 'StoC', computeBasicStats(latencyMeasurementState.stoC));
-}
-
-// 관리자 콘솔에서 바로 쓰기 쉽게 전역 노출
-window.startLatencyMeasurement = startLatencyMeasurement;
-window.stopLatencyMeasurement = stopLatencyMeasurement;
-
-// yeon
-// ===== Latency probe helpers (Receiver) =====
-const TIME_STAMP = 0x4c41544e; // 'LATN'
-const LAT_HEADER_LEN = 32;    // uint32 STAMP + float64 sendTsMs
-let frameId = 0;
-
-// yeon
-function nowEpochMs() {
-	// 수신 시각: epoch(ms) 기반. (송신 측도 같은 기준으로 넣어야 함)
-	return performance.timeOrigin + performance.now();
-	//return Date.now();
-}
-
-function safeJsonParse(message) {
-	if (typeof message !== 'string')
-		return null;
-
-	try {
-		return JSON.parse(message);
-	}
-	catch (e) {
-		return null;
-	}
-}
-function computeViewerToSfuOffsetMs({ t1ViewMs, t2SfuMs, t3ViewMs }) {
-	// offset = SFU clock - Viewer clock
-	return t2SfuMs - ((t1ViewMs + t3ViewMs) / 2);
-}
-
-// yeon
-function setupSenderTimestamp(rtpSender, { logger } = {}) {
-	if (!rtpSender) return;
-
-	if (typeof rtpSender.createEncodedStreams !== 'function') {
-		logger?.warn?.('[latency] rtpSender.createEncodedStreams() not supported in this browser');
-		return;
-	}
-
-	let streams;
-	try {
-		streams = rtpSender.createEncodedStreams();
-	} catch (e) {
-		logger?.warn?.('[latency] sender createEncodedStreams() failed:', e);
-		return;
-	}
-
-	const { readable, writable } = streams;
-
-	const transformer = new TransformStream({ // encodedFrame은 webRTC가 사용하는 프레임 객체
-		transform: (encodedFrame, controller) => {
-			try {
-				frameId = frameId + 1;
-				const sendTsMs = nowEpochMs();
-
-				const header = new ArrayBuffer(LAT_HEADER_LEN);
-				const dv = new DataView(header);
-
-				dv.setUint32(0, TIME_STAMP, true); // STAMP
-				dv.setUint32(4, frameId, true);    // FrameID`
-				dv.setFloat64(8, sendTsMs, true);  // sendTsMs
-				dv.setFloat64(16, 0, true);        // SFUrecvMs
-				dv.setFloat64(24, 0, true);        // SFUsendMs
-
-				const payload = new Uint8Array(encodedFrame.data);
-
-				// prepend: [header][payload]
-				const out = new Uint8Array(LAT_HEADER_LEN + payload.byteLength);
-				out.set(new Uint8Array(header), 0);
-				out.set(payload, LAT_HEADER_LEN);
-
-				encodedFrame.data = out.buffer;
-			} catch (e) {
-				logger?.warn?.('[latency] sender transform error:', e);
-				// 에러 나도 원본 프레임 통과시키는 게 안전하니 그대로 enqueue
-			}
-
-			controller.enqueue(encodedFrame);
-		}
-	});
-
-	readable
-		.pipeThrough(transformer)
-		.pipeTo(writable)
-		.catch((e) => logger?.warn?.('[latency] sender pipeTo failed:', e));
-
-	logger?.debug?.('[latency] Sender timestamp tagger installed');
-}
-
-// yeon
-function sliceArrayBuffer(buffer, byteOffset, byteLength) {
-	return buffer.slice(byteOffset, byteOffset + byteLength);
-}
-
-// yeon
-function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency, getViewerToSfuOffsetMs } = {}) {
-	if (!rtpReceiver) return;
-
-	// Chromium Insertable Streams 경로 (demo의 e2e도 이걸 사용)
-	if (typeof rtpReceiver.createEncodedStreams !== 'function') {
-		logger?.warn?.('[latency] rtpReceiver.createEncodedStreams() not supported in this browser');
-		return;
-	}
-
-	let streams;
-	try {
-		streams = rtpReceiver.createEncodedStreams();
-	} catch (e) {
-		// e2e가 이미 createEncodedStreams를 사용했거나(중복), 브라우저 정책/플래그 문제일 수 있음
-		logger?.warn?.('[latency] createEncodedStreams() failed (maybe already used by e2e?):', e);
-		return;
-	}
-	onLatency
-	const { readable, writable } = streams;
-
-	const transformer = new TransformStream({
-		transform: (encodedFrame, controller) => {
-			try {
-				const data = new Uint8Array(encodedFrame.data);
-
-				if (data.byteLength >= LAT_HEADER_LEN) {
-					const dv = new DataView(data.buffer, data.byteOffset, LAT_HEADER_LEN);
-					const stamp = dv.getUint32(0, true);
-
-					if (stamp === TIME_STAMP) {
-						const recvTsMs = nowEpochMs();
-						const FrameID = dv.getUint32(4, true);
-						const sendTsMs = dv.getFloat64(8, true);
-						const SFUrecvMs = dv.getFloat64(16, true);
-						const SFUsendMs = dv.getFloat64(24, true);
-
-						const offsetMs = typeof getViewerToSfuOffsetMs === 'function'
-							? getViewerToSfuOffsetMs()
-							: 0;
-						const PtoS = SFUrecvMs - sendTsMs;
-						// 기존: const StoC = recvTsMs - SFUsendMs;
-						const StoC = (recvTsMs + offsetMs) - SFUsendMs;
-						const StoC2 = recvTsMs - SFUsendMs;
-
-						if (latencyMeasurementState.active) {
-							latencyMeasurementState.ptoS.push(PtoS);
-							latencyMeasurementState.stoC.push(StoC);
-							latencyMeasurementState.lastFrameId = FrameID;
-						}
-
-						if (FrameID % 30 == 0) {
-							//logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, SFUsendMs=${SFUsendMs.toFixed(2)}ms, second=${StoC.toFixed(2)}ms, fake = ${StoC2.toFixed(2)}ms, offset = ${offsetMs.toFixed(2)}ms`);
-
-							try {
-								onLatency?.({ StoC });
-							} catch (e) {
-								logger?.warn?.('[latency] onLatency callback error:', e);
-							}
-						}
-
-						// 디코더에 넘기기 전에 헤더 제거
-						const payload = data.subarray(LAT_HEADER_LEN);
-						encodedFrame.data = sliceArrayBuffer(payload.buffer, payload.byteOffset, payload.byteLength);
-					}
-				}
-			} catch (e) {
-				logger?.warn?.('[latency] transform error:', e);
-			}
-
-			controller.enqueue(encodedFrame);
-		}
-	});
-
-	readable
-		.pipeThrough(transformer)
-		.pipeTo(writable)
-		.catch((e) => logger?.warn?.('[latency] pipeTo failed:', e));
-
-	logger?.debug?.('[latency] Receiver latency probe installed');
-}
-
 function safeDelta(current, previous) {
 	if (current === undefined || previous === undefined) {
 		return null;
@@ -732,26 +438,6 @@ export default class RoomClient {
 		// @type {mediasoupClient.DataProducer}
 		this._botDataProducer = null;
 
-
-		//// yeon ////
-		// yeon 추가: ltn data producer
-		this._ltnDataProducer = null;
-
-		// yeon 추가: Local sync DataProducer.
-		this._syncDataProducer = null;
-
-		// Viewer -> SFU offset(ms). 즉, viewer timestamp + offset = sfu timestamp
-		this._viewerToSfuOffsetMs = 0;
-
-		// 최근 sync 샘플 관리
-		this._syncSeq = 0;
-		this._pendingSyncRequests = new Map(); // seq -> { t1ViewMs, sentAtMonoMs }
-
-		// 품질 추적
-		this._lastSyncRttMs = null;
-		this._lastSyncUpdatedAt = null;
-		//// yeon ////
-
 		// mediasoup Consumers.
 		// @type {Map<String, mediasoupClient.Consumer>}
 		this._consumers = new Map();
@@ -789,7 +475,6 @@ export default class RoomClient {
 		if (this._closed) return;
 
 		this._closed = true;
-		this.stopSyncLoop();
 
 		logger.debug('close()');
 
@@ -810,49 +495,6 @@ export default class RoomClient {
 		store.dispatch(stateActions.setRoomState('closed'));
 	}
 
-	//yeon
-	_handleSyncResponse(data) {
-		const { seq, t2SfuMs } = data;
-		const pending = this._pendingSyncRequests.get(seq);
-
-		if (!pending) {
-			logger.warn('[sync] response for unknown seq:%s', seq);
-			return;
-		}
-
-		this._pendingSyncRequests.delete(seq);
-
-		const t3ViewMs = nowEpochMs();
-		const t1ViewMs = pending.t1ViewMs;
-		const rttMs = t3ViewMs - t1ViewMs;
-		const offsetMs = computeViewerToSfuOffsetMs({
-			t1ViewMs,
-			t2SfuMs,
-			t3ViewMs
-		});
-
-		if (this._lastSyncRttMs == null || rttMs <= this._lastSyncRttMs) {
-			this._viewerToSfuOffsetMs = offsetMs;
-		}
-		else {
-			this._viewerToSfuOffsetMs =
-				(this._viewerToSfuOffsetMs * 0.8) + (offsetMs * 0.2);
-		}
-
-		this._lastSyncRttMs = rttMs;
-		this._lastSyncUpdatedAt = Date.now();
-
-		console.log(
-			`[sync] seq=${seq} rttMs=${rttMs.toFixed(3)} offsetMs=${this._viewerToSfuOffsetMs.toFixed(3)}`
-		);
-
-		logger.debug(
-			'[sync] updated [seq:%s, rttMs:%f, offsetMs:%f]',
-			seq,
-			rttMs,
-			this._viewerToSfuOffsetMs
-		);
-	}
 	// yeon
 	_ensurePeerExists(peerId, { appData } = {}) {
 		if (!peerId) return;
@@ -986,29 +628,9 @@ export default class RoomClient {
 								// in screen sharing so libwebrtc will just try to sync mic and
 								// webcam streams from the same remote peer.
 								streamId: `${peerId}-${appData.source === 'screensharing' ? 'screensharing' : 'audio-video'}`,
-								onRtpReceiver: (rtpReceiver) => {
-									// video만 측정하고 싶다면: if (kind !== 'video') return;
-									setupReceiverLatency(rtpReceiver, {
-										logger,
-										logEvery: 60,
-										onLatency: (m) => {
-											const msg = JSON.stringify({
-												type: 'latency',
-												kind, // video/audio
-												peerId: peerId,
-												// producerId,
-												// consumerId,
-												s2cMs: m.StoC.toFixed(2),
-											});
-											// DataProducer
-											try { this.sendLtnMessage(msg); }
-											catch (e) { logger?.warn?.('[latency] sendLtnMessage failed:', e); }
-										},
-										getViewerToSfuOffsetMs: () => this._viewerToSfuOffsetMs
-									});
-								},
 								appData: { ...appData, peerId },
 							});
+
 							//logger
 							if (consumer.kind === 'video' && consumer.rtpReceiver) {
 								this._receiverConsumerMap.set(consumer.rtpReceiver, {
@@ -1036,7 +658,7 @@ export default class RoomClient {
 										);
 										// window.VIDEO_STATS = window.VIDEO_STATS || {};
 										// window.VIDEO_STATS[consumer.id] = stats;
-							
+
 										console.log(
 											`[video-stats] ` +
 											`consumer=${consumer.id}, ` +
@@ -1052,7 +674,7 @@ export default class RoomClient {
 										);
 									}
 								});
-							
+
 								this._videoStatsMonitors.set(consumer.id, stopStatsMonitor);
 							}
 
@@ -1066,7 +688,6 @@ export default class RoomClient {
 									stopStatsMonitor();
 									this._videoStatsMonitors.delete(consumer.id);
 								}
-
 								this._consumers.delete(consumer.id);
 							});
 
@@ -1268,39 +889,6 @@ export default class RoomClient {
 
 										break;
 									}
-
-									//yeon: sync packet 처리 분기
-									case 'sync': {
-										const data = safeJsonParse(message);
-
-										if (!data || !data.type) {
-											logger.warn('[sync] invalid sync message:%o', message);
-											break;
-										}
-
-										switch (data.type) {
-											case 'sync_resp': {
-												this._handleSyncResponse(data);
-												break;
-											}
-
-											// SFU가 viewer에게 sync_req를 보내는 구조도 나중에 원하면 확장 가능
-											case 'sync_req': {
-												// viewer-initiated 구조를 쓸 거면 여기서는 보통 안 씀
-												logger.debug('[sync] unexpected sync_req on viewer');
-												break;
-											}
-
-											default: {
-												logger.warn('[sync] unknown sync message type:%s', data.type);
-												break;
-											}
-										}
-
-										break;
-									}
-
-
 								}
 							});
 
@@ -1655,9 +1243,6 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'audio',
 				},
@@ -1911,9 +1496,6 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'video',
 				},
@@ -2670,219 +2252,6 @@ export default class RoomClient {
 		}
 	}
 
-	async enableLtnDataProducer() {
-		logger.debug('enableLtnDataProducer()');
-
-		// NOTE: Should enable this code but it's useful for testing.
-		// if (this._botDataProducer)
-		// 	return;
-
-		try {
-			// Create Ltn DataProducer.
-			this._ltnDataProducer = await this._sendTransport.produceData({
-				// ordered: false,
-				// maxPacketLifeTime: 2000,
-				ordered: true,
-				label: 'latency-metrics',
-				priority: 'medium',
-				appData: { channel: 'ltn' },
-			});
-
-			store.dispatch(
-				stateActions.addDataProducer({
-					id: this._ltnDataProducer.id,
-					sctpStreamParameters: this._ltnDataProducer.sctpStreamParameters,
-					label: this._ltnDataProducer.label,
-					protocol: this._ltnDataProducer.protocol,
-				})
-			);
-
-			this._ltnDataProducer.on('transportclose', () => {
-				this._ltnDataProducer = null;
-			});
-
-			this._ltnDataProducer.on('open', () => {
-				logger.debug('ltn DataProducer "open" event');
-			});
-
-			this._ltnDataProducer.on('close', () => {
-				logger.error('ltn DataProducer "close" event');
-
-				this._ltnDataProducer = null;
-
-				store.dispatch(
-					requestActions.notify({
-						type: 'error',
-						text: 'Ltn DataProducer closed',
-					})
-				);
-			});
-
-			this._ltnDataProducer.on('error', error => {
-				logger.error('ltn DataProducer "error" event:%o', error);
-
-				store.dispatch(
-					requestActions.notify({
-						type: 'error',
-						text: `Ltn DataProducer error: ${error}`,
-					})
-				);
-			});
-
-			this._ltnDataProducer.on('bufferedamountlow', () => {
-				logger.debug('bot DataProducer "bufferedamountlow" event');
-			});
-		} catch (error) {
-			logger.error('enableBotDataProducer() | failed:%o', error);
-
-			store.dispatch(
-				requestActions.notify({
-					type: 'error',
-					text: `Error enabling bot DataProducer: ${error}`,
-				})
-			);
-
-			throw error;
-		}
-	}
-
-
-	async enableSyncDataProducer() {
-		logger.debug('enableSyncDataProducer()');
-
-		try {
-			this._syncDataProducer = await this._sendTransport.produceData({
-				ordered: true,
-				label: 'sync',
-				priority: 'medium',
-				appData: { channel: 'sync' },
-			});
-
-			store.dispatch(
-				stateActions.addDataProducer({
-					id: this._syncDataProducer.id,
-					sctpStreamParameters: this._syncDataProducer.sctpStreamParameters,
-					label: this._syncDataProducer.label,
-					protocol: this._syncDataProducer.protocol,
-				})
-			);
-
-			this._syncDataProducer.on('transportclose', () => {
-				this._syncDataProducer = null;
-			});
-
-			this._syncDataProducer.on('open', () => {
-				logger.debug('sync DataProducer "open" event');
-			});
-
-			this._syncDataProducer.on('close', () => {
-				logger.error('sync DataProducer "close" event');
-				this._syncDataProducer = null;
-			});
-
-			this._syncDataProducer.on('error', (error) => {
-				logger.error('sync DataProducer "error" event:%o', error);
-			});
-
-			this._syncDataProducer.on('bufferedamountlow', () => {
-				logger.debug('sync DataProducer "bufferedamountlow" event');
-			});
-		}
-		catch (error) {
-			logger.error('enableSyncDataProducer() | failed:%o', error);
-
-			store.dispatch(
-				requestActions.notify({
-					type: 'error',
-					text: `Error enabling sync DataProducer: ${error}`,
-				})
-			);
-
-			throw error;
-		}
-	}
-
-	// yeon //
-	async sendLtnMessage(latency) {
-		//logger.debug('sendLtnMessage() [latency:]');
-		if (!this._ltnDataProducer) {
-			//여기 나중에 수정
-			// store.dispatch(
-			// 	requestActions.notify({
-			// 		type: 'error',
-			// 		text: 'No ltn DataProducer',
-			// 	})
-			// );
-			return;
-		}
-
-		try {
-			this._ltnDataProducer.send(latency);
-		} catch (error) {
-			logger.error('ltn DataProducer.send() failed:%o', error);
-
-			store.dispatch(
-				requestActions.notify({
-					type: 'error',
-					text: `ltn DataProducer.send() failed: ${error}`,
-				})
-			);
-		}
-	}
-
-
-	sendSyncMessage(message) {
-		if (!this._syncDataProducer)
-			throw new Error('no sync DataProducer');
-
-		this._syncDataProducer.send(message);
-	}
-
-	sendSyncProbe() {
-		if (!this._syncDataProducer)
-			return;
-
-		const seq = ++this._syncSeq;
-		const t1ViewMs = nowEpochMs();
-
-		this._pendingSyncRequests.set(seq, {
-			t1ViewMs,
-			sentAtMonoMs: t1ViewMs
-		});
-
-		const msg = JSON.stringify({
-			type: 'sync_req',
-			seq,
-			t1ViewMs
-		});
-
-		try {
-			this.sendSyncMessage(msg);
-		}
-		catch (e) {
-			logger.warn('[sync] sendSyncProbe failed:%o', e);
-			this._pendingSyncRequests.delete(seq);
-		}
-	}
-
-	// startSyncLoop(intervalMs = 1000) {
-	// 	this.stopSyncLoop();
-
-	// 	this._syncInterval = setInterval(() => {
-	// 		this.sendSyncProbe();
-	// 	}, intervalMs);
-
-	// 	logger.debug('[sync] sync loop started [intervalMs:%d]', intervalMs);
-	// }
-
-	// stopSyncLoop() {
-	// 	if (this._syncInterval) {
-	// 		clearInterval(this._syncInterval);
-	// 		this._syncInterval = null;
-	// 	}
-	// }
-	// yeon //
-
 	async sendChatMessage(text) {
 		logger.debug('sendChatMessage() [text:"%s]', text);
 
@@ -3380,11 +2749,8 @@ export default class RoomClient {
 						: undefined,
 			});
 
-			//yeon: sync를 위한 루프 시작
-			//this.startSyncLoop(2000);
-
 			// yun: recv&decode telemetry data channel
-			void this._createFrameTelemetryDataProducer();
+			//void this._createFrameTelemetryDataProducer();
 
 			store.dispatch(stateActions.setRoomState('connected'));
 
@@ -3439,12 +2805,6 @@ export default class RoomClient {
 				if (this._useDataChannel) {
 					this.enableChatDataProducer();
 					this.enableBotDataProducer();
-					this.enableLtnDataProducer();
-					// this.enableSyncDataProducer();
-
-					// //viewer라면 sync 시작
-					// if (role === 'viewer')
-					// 	this.sync request(10000);
 				}
 			}
 
@@ -3665,114 +3025,7 @@ export default class RoomClient {
 
 		store.dispatch(stateActions.setConsumerResumed(consumer.id, 'local'));
 	}
-
-	// yeon
-	async sendSyncOnce() {
-		//console.log('[sync] sendSyncOnce called');
-
-		if (!this._protoo) {
-			console.log('[sync] no protoo');
-			return;
-		}
-
-		if (this._protoo.closed) {
-			console.log('[sync] protoo closed');
-			return;
-		}
-
-		const pc = this._recvTransport?._handler?._pc;
-		if (!pc) {
-			console.log('[sync] no recv pc yet');
-			return;
-		}
-
-		const receivers = pc.getReceivers();
-		//console.log('[sync] receivers length =', receivers.length);
-
-		let consumerId;
-
-		for (const receiver of receivers) {
-			//console.log('[sync] receiver track kind =', receiver.track?.kind);
-
-			if (!receiver.track || receiver.track.kind !== 'video')
-				continue;
-
-			const meta = this._receiverConsumerMap.get(receiver);
-			//console.log('[sync] receiver meta =', meta);
-
-			if (!meta)
-				continue;
-
-			consumerId = meta.consumerId;
-			break;
-		}
-
-		if (!consumerId) {
-			console.log('[sync] no video consumerId available yet');
-			return;
-		}
-
-		const seq = ++this._syncSeq;
-		const t1ViewMs = nowEpochMs();
-
-		this._pendingSyncRequests.set(seq, {
-			t1ViewMs,
-			sentAtMonoMs: t1ViewMs
-		});
-
-		//console.log('[sync] sending request', { consumerId, seq, t1ViewMs });
-
-		try {
-			const response = await this._protoo.request('sync', {
-				consumerId,
-				seq,
-				t1ViewMs
-			});
-
-			console.log('[sync] response received', response);
-
-			this._handleSyncResponse(response);
-
-			console.log('[sync] updated', {
-				consumerId,
-				seq,
-				offsetMs: this._viewerToSfuOffsetMs,
-				rttMs: this._lastSyncRttMs,
-				updatedAt: this._lastSyncUpdatedAt
-			});
-		}
-		catch (error) {
-			this._pendingSyncRequests.delete(seq);
-			console.warn('[sync] request failed', error);
-		}
-	}
-	//yeon
-	startSyncLoop(intervalMs = 2000) {
-		if (this._syncTimer)
-			return;
-		if (role !== 'viewer') {
-			return;
-		}
-
-		logger.debug('startSyncLoop()');
-
-		this.sendSyncOnce().catch(() => { });
-
-		console.log('[sync] startSyncLoop called');
-
-		this._syncTimer = setInterval(() => {
-			console.log('[sync] interval tick');
-			this.sendSyncOnce().catch(() => { });
-		}, intervalMs);
-	}
-
-	stopSyncLoop() {
-		if (this._syncTimer) {
-			clearInterval(this._syncTimer);
-			this._syncTimer = null;
-		}
-	}
-
+	
 	// yun
 	_startDeadlineReporting() {
 		if (this._deadlineTimer)

@@ -220,19 +220,7 @@ type RequestFromPeer =
 				secret: string;
 			};
 	  }
-	| {
-			name: 'sync';
-			data: {
-				consumerId: string;
-				seq: number;
-				t1ViewMs: number;
-			};
-			responseData: {
-				seq: number;
-				t2SfuMs: number;
-			};
-	  };
-
+	  
 export type RequestNameFromPeer = keyof RequestNameDataMap<RequestFromPeer>;
 
 export type RequestDataFromPeer<Name extends RequestNameFromPeer> =
