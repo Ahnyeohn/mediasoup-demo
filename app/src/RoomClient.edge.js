@@ -33,154 +33,6 @@ const logger = new Logger('RoomClient');
 
 let store;
 
-// yeon
-// ===== Latency probe helpers (Receiver) =====
-const TIME_STAMP = 0x4c41544e; // 'LATN'
-const LAT_HEADER_LEN = 32;    // uint32 STAMP + float64 sendTsMs
-let frameId = 0;
-
-// yeon
-function nowEpochMs() {
-	// 수신 시각: epoch(ms) 기반. (송신 측도 같은 기준으로 넣어야 함)
-	return performance.timeOrigin + performance.now();
-	//return Date.now();
-}
-
-// yeon
-function setupSenderTimestamp(rtpSender, { logger } = {}) {
-	if (!rtpSender) return;
-
-	if (typeof rtpSender.createEncodedStreams !== 'function') {
-		logger?.warn?.('[latency] rtpSender.createEncodedStreams() not supported in this browser');
-		return;
-	}
-
-	let streams;
-	try {
-		streams = rtpSender.createEncodedStreams();
-	} catch (e) {
-		logger?.warn?.('[latency] sender createEncodedStreams() failed:', e);
-		return;
-	}
-
-	const { readable, writable } = streams;
-
-	const transformer = new TransformStream({ // encodedFrame은 webRTC가 사용하는 프레임 객체
-		transform: (encodedFrame, controller) => {
-			try {
-				frameId = frameId + 1;
-				const sendTsMs = nowEpochMs();
-
-				const header = new ArrayBuffer(LAT_HEADER_LEN);
-				const dv = new DataView(header);
-
-				dv.setUint32(0, TIME_STAMP, true); // STAMP
-				dv.setUint32(4, frameId, true);    // FrameID
-				dv.setFloat64(8, sendTsMs, true);  // sendTsMs
-				dv.setFloat64(16, 0, true);        // SFUrecvMs
-				dv.setFloat64(24, 0, true);        // SFUsendMs
-
-				const payload = new Uint8Array(encodedFrame.data);
-
-				// prepend: [header][payload]
-				const out = new Uint8Array(LAT_HEADER_LEN + payload.byteLength);
-				out.set(new Uint8Array(header), 0);
-				out.set(payload, LAT_HEADER_LEN);
-
-				encodedFrame.data = out.buffer;
-			} catch (e) {
-				logger?.warn?.('[latency] sender transform error:', e);
-				// 에러 나도 원본 프레임 통과시키는 게 안전하니 그대로 enqueue
-			}
-
-			controller.enqueue(encodedFrame);
-		}
-	});
-
-	readable
-		.pipeThrough(transformer)
-		.pipeTo(writable)
-		.catch((e) => logger?.warn?.('[latency] sender pipeTo failed:', e));
-
-	logger?.debug?.('[latency] Sender timestamp tagger installed');
-}
-
-// yeon
-function sliceArrayBuffer(buffer, byteOffset, byteLength) {
-	return buffer.slice(byteOffset, byteOffset + byteLength);
-}
-
-// yeon
-function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency } = {}) {
-	if (!rtpReceiver) return;
-
-	// Chromium Insertable Streams 경로 (demo의 e2e도 이걸 사용)
-	if (typeof rtpReceiver.createEncodedStreams !== 'function') {
-		logger?.warn?.('[latency] rtpReceiver.createEncodedStreams() not supported in this browser');
-		return;
-	}
-
-	let streams;
-	try {
-		streams = rtpReceiver.createEncodedStreams();
-	} catch (e) {
-		// e2e가 이미 createEncodedStreams를 사용했거나(중복), 브라우저 정책/플래그 문제일 수 있음
-		logger?.warn?.('[latency] createEncodedStreams() failed (maybe already used by e2e?):', e);
-		return;
-	}
-	onLatency
-	const { readable, writable } = streams;
-
-	const transformer = new TransformStream({
-		transform: (encodedFrame, controller) => {
-			try {
-				const data = new Uint8Array(encodedFrame.data);
-
-				if (data.byteLength >= LAT_HEADER_LEN) {
-					const dv = new DataView(data.buffer, data.byteOffset, LAT_HEADER_LEN);
-					const stamp = dv.getUint32(0, true);
-
-					if (stamp === TIME_STAMP) {
-						const recvTsMs = nowEpochMs();
-						const FrameID = dv.getUint32(4, true);
-						const sendTsMs = dv.getFloat64(8, true);
-						const SFUrecvMs = dv.getFloat64(16, true);
-						const SFUsendMs = dv.getFloat64(24, true);
-
-						const PtoS = SFUrecvMs - sendTsMs;
-						const StoC = recvTsMs - SFUsendMs;
-
-						if (FrameID % 30 == 0) {
-							logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, second=${StoC.toFixed(2)}ms`);
-
-							try {
-								onLatency?.({ StoC });
-							} catch (e) {
-								logger?.warn?.('[latency] onLatency callback error:', e);
-							}
-						}
-
-						// 디코더에 넘기기 전에 헤더 제거
-						const payload = data.subarray(LAT_HEADER_LEN);
-						encodedFrame.data = sliceArrayBuffer(payload.buffer, payload.byteOffset, payload.byteLength);
-					}
-				}
-			} catch (e) {
-				logger?.warn?.('[latency] transform error:', e);
-			}
-
-			controller.enqueue(encodedFrame);
-		}
-	});
-
-	readable
-		.pipeThrough(transformer)
-		.pipeTo(writable)
-		.catch((e) => logger?.warn?.('[latency] pipeTo failed:', e));
-
-	logger?.debug?.('[latency] Receiver latency probe installed');
-}
-
 export default class RoomClient {
 	/**
 	 * @param  {Object} data
@@ -409,9 +261,6 @@ export default class RoomClient {
 		// @type {mediasoupClient.DataProducer}
 		this._botDataProducer = null;
 
-		// 추가: ltn data producer
-		this._ltnDataProducer = null;
-
 		// mediasoup Consumers.
 		// @type {Map<String, mediasoupClient.Consumer>}
 		this._consumers = new Map();
@@ -595,26 +444,6 @@ export default class RoomClient {
 								// in screen sharing so libwebrtc will just try to sync mic and
 								// webcam streams from the same remote peer.
 								streamId: `${peerId}-${appData.source === 'screensharing' ? 'screensharing' : 'audio-video'}`,
-								onRtpReceiver: (rtpReceiver) => {
-								// video만 측정하고 싶다면: if (kind !== 'video') return;
-									setupReceiverLatency(rtpReceiver, {
-										logger,
-										logEvery: 60,
-										onLatency: (m) => {
-											const msg = JSON.stringify({
-												type: 'latency',
-												kind, // video/audio
-												peerId: peerId,
-												// producerId,
-												// consumerId,
-												s2cMs: m.StoC.toFixed(2),
-											});
-											// DataProducer
-											try { this.sendLtnMessage(msg); }
-											catch (e) { logger?.warn?.('[latency] sendLtnMessage failed:', e); }
-										}
-									});
-								},
 								appData: { ...appData, peerId },
 							});
 							//logger
@@ -1175,9 +1004,6 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'audio',
 				},
@@ -1428,9 +1254,6 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'video',
 				},
@@ -2187,109 +2010,6 @@ export default class RoomClient {
 		}
 	}
 
-	async enableLtnDataProducer() {
-		logger.debug('enableLtnDataProducer()');
-
-		// NOTE: Should enable this code but it's useful for testing.
-		// if (this._botDataProducer)
-		// 	return;
-
-		try {
-			// Create Ltn DataProducer.
-			this._ltnDataProducer = await this._sendTransport.produceData({
-				// ordered: false,
-				// maxPacketLifeTime: 2000,
-				ordered: true,
-				label: 'latency-metrics',
-				priority: 'medium',
-				appData: { channel: 'ltn' },
-			});
-
-			store.dispatch(
-				stateActions.addDataProducer({
-					id: this._ltnDataProducer.id,
-					sctpStreamParameters: this._ltnDataProducer.sctpStreamParameters,
-					label: this._ltnDataProducer.label,
-					protocol: this._ltnDataProducer.protocol,
-				})
-			);
-
-			this._ltnDataProducer.on('transportclose', () => {
-				this._ltnDataProducer = null;
-			});
-
-			this._ltnDataProducer.on('open', () => {
-				logger.debug('ltn DataProducer "open" event');
-			});
-
-			this._ltnDataProducer.on('close', () => {
-				logger.error('ltn DataProducer "close" event');
-
-				this._ltnDataProducer = null;
-
-				store.dispatch(
-					requestActions.notify({
-						type: 'error',
-						text: 'Ltn DataProducer closed',
-					})
-				);
-			});
-
-			this._ltnDataProducer.on('error', error => {
-				logger.error('ltn DataProducer "error" event:%o', error);
-
-				store.dispatch(
-					requestActions.notify({
-						type: 'error',
-						text: `Ltn DataProducer error: ${error}`,
-					})
-				);
-			});
-
-			this._ltnDataProducer.on('bufferedamountlow', () => {
-				logger.debug('bot DataProducer "bufferedamountlow" event');
-			});
-		} catch (error) {
-			logger.error('enableBotDataProducer() | failed:%o', error);
-
-			store.dispatch(
-				requestActions.notify({
-					type: 'error',
-					text: `Error enabling bot DataProducer: ${error}`,
-				})
-			);
-
-			throw error;
-		}
-	}
-
-	async sendLtnMessage(latency) {
-		//logger.debug('sendLtnMessage() [latency:]');
-		if (!this._ltnDataProducer) {
-			//여기 나중에 수정
-			// store.dispatch(
-			// 	requestActions.notify({
-			// 		type: 'error',
-			// 		text: 'No ltn DataProducer',
-			// 	})
-			// );
-			return;
-		}
-
-		try {
-			this._ltnDataProducer.send(latency);
-		} catch (error) {
-			logger.error('ltn DataProducer.send() failed:%o', error);
-
-			store.dispatch(
-				requestActions.notify({
-					type: 'error',
-					text: `ltn DataProducer.send() failed: ${error}`,
-				})
-			);
-		}
-	}
-
 	async sendChatMessage(text) {
 		logger.debug('sendChatMessage() [text:"%s]', text);
 
@@ -2840,7 +2560,6 @@ export default class RoomClient {
 				if (this._useDataChannel) {
 					this.enableChatDataProducer();
 					this.enableBotDataProducer();
-					this.enableLtnDataProducer();
 				}
 			}
 
