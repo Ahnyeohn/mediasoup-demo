@@ -14,7 +14,8 @@ import * as os from 'node:os';
  * @type {import('./src/types.ts').ServerConfig}
  */
 
-const ANNOUNCED_IP = process.env['MEDIASOUP_ANNOUNCED_ADDRESS'] ?? process.env['SERVER_IP'];
+/** const ANNOUNCED_IP = process.env['SERVER_IP']; **/
+const ANNOUNCED_IP = process.env.PUBLIC_IP
 
 export const config = {
 	/**
@@ -43,8 +44,8 @@ export const config = {
 	 */
 	mediasoup: {
 		// Number of mediasoup workers to launch.
-		//numWorkers: Object.keys(os.cpus()).length,
-		numWorkers: 1,
+		// numWorkers: Number(process.env['MEDIASOUP_NUM_WORKERS']) ?? Object.keys(os.cpus()).length,
+		numWorkers: Object.keys(os.cpus()).length,
 		/**
 		 * mediasoup WorkerSettings.
 		 *

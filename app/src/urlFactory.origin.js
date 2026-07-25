@@ -11,7 +11,7 @@ export function getProtooUrl(params) {
 		protooPort = 4444;
 	}
 
-	const hostname = window.location.hostname;
+	const hostname = window.location.hostname; 
 	const protocol = 'wss';
 
 	const query = qs.stringify(params);

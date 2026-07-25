@@ -64,33 +64,33 @@ function setupSenderTimestamp(rtpSender, { logger } = {}) {
 
 	const transformer = new TransformStream({ // encodedFrame은 webRTC가 사용하는 프레임 객체
 		transform: (encodedFrame, controller) => {
-		try {
-			frameId = frameId + 1;
-			const sendTsMs = nowEpochMs();
+			try {
+				frameId = frameId + 1;
+				const sendTsMs = nowEpochMs();
 
-			const header = new ArrayBuffer(LAT_HEADER_LEN);
-			const dv = new DataView(header);
+				const header = new ArrayBuffer(LAT_HEADER_LEN);
+				const dv = new DataView(header);
 
-			dv.setUint32(0, TIME_STAMP, true); // STAMP
-			dv.setUint32(4, frameId, true);    // FrameID
-			dv.setFloat64(8, sendTsMs, true);  // sendTsMs
-			dv.setFloat64(16, 0, true);        // SFUrecvMs
-			dv.setFloat64(24, 0, true);        // SFUsendMs
+				dv.setUint32(0, TIME_STAMP, true); // STAMP
+				dv.setUint32(4, frameId, true);    // FrameID
+				dv.setFloat64(8, sendTsMs, true);  // sendTsMs
+				dv.setFloat64(16, 0, true);        // SFUrecvMs
+				dv.setFloat64(24, 0, true);        // SFUsendMs
 
-			const payload = new Uint8Array(encodedFrame.data);
+				const payload = new Uint8Array(encodedFrame.data);
 
-			// prepend: [header][payload]
-			const out = new Uint8Array(LAT_HEADER_LEN + payload.byteLength);
-			out.set(new Uint8Array(header), 0);
-			out.set(payload, LAT_HEADER_LEN);
+				// prepend: [header][payload]
+				const out = new Uint8Array(LAT_HEADER_LEN + payload.byteLength);
+				out.set(new Uint8Array(header), 0);
+				out.set(payload, LAT_HEADER_LEN);
 
-			encodedFrame.data = out.buffer;
-		} catch (e) {
-			logger?.warn?.('[latency] sender transform error:', e);
-			// 에러 나도 원본 프레임 통과시키는 게 안전하니 그대로 enqueue
-		}
+				encodedFrame.data = out.buffer;
+			} catch (e) {
+				logger?.warn?.('[latency] sender transform error:', e);
+				// 에러 나도 원본 프레임 통과시키는 게 안전하니 그대로 enqueue
+			}
 
-		controller.enqueue(encodedFrame);
+			controller.enqueue(encodedFrame);
 		}
 	});
 
@@ -124,48 +124,48 @@ function setupReceiverLatency(rtpReceiver, { logger, logEvery = 60, onLatency } 
 		logger?.warn?.('[latency] createEncodedStreams() failed (maybe already used by e2e?):', e);
 		return;
 	}
-onLatency
+	onLatency
 	const { readable, writable } = streams;
 
 	const transformer = new TransformStream({
 		transform: (encodedFrame, controller) => {
-		try {
-			const data = new Uint8Array(encodedFrame.data);
+			try {
+				const data = new Uint8Array(encodedFrame.data);
 
-			if (data.byteLength >= LAT_HEADER_LEN) {
-			const dv = new DataView(data.buffer, data.byteOffset, LAT_HEADER_LEN);
-			const stamp = dv.getUint32(0, true);
+				if (data.byteLength >= LAT_HEADER_LEN) {
+					const dv = new DataView(data.buffer, data.byteOffset, LAT_HEADER_LEN);
+					const stamp = dv.getUint32(0, true);
 
-				if (stamp === TIME_STAMP) {
-					const recvTsMs = nowEpochMs();
-					const FrameID = dv.getUint32(4, true);
-					const sendTsMs = dv.getFloat64(8, true);
-					const SFUrecvMs = dv.getFloat64(16, true);
-					const SFUsendMs = dv.getFloat64(24, true);
+					if (stamp === TIME_STAMP) {
+						const recvTsMs = nowEpochMs();
+						const FrameID = dv.getUint32(4, true);
+						const sendTsMs = dv.getFloat64(8, true);
+						const SFUrecvMs = dv.getFloat64(16, true);
+						const SFUsendMs = dv.getFloat64(24, true);
 
-					const PtoS = SFUrecvMs - sendTsMs;
-					const StoC = recvTsMs - SFUsendMs;
+						const PtoS = SFUrecvMs - sendTsMs;
+						const StoC = recvTsMs - SFUsendMs;
 
-					if (FrameID % 30 == 0) {
-						logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, second=${StoC.toFixed(2)}ms`);
+						if (FrameID % 30 == 0) {
+							logger?.debug?.(`[latency] frames=${FrameID}, first=${PtoS.toFixed(2)}ms, second=${StoC.toFixed(2)}ms`);
 
-						try {
-							onLatency?.({ StoC });
-						} catch (e) {
-							logger?.warn?.('[latency] onLatency callback error:', e);
+							try {
+								onLatency?.({ StoC });
+							} catch (e) {
+								logger?.warn?.('[latency] onLatency callback error:', e);
+							}
 						}
+
+						// 디코더에 넘기기 전에 헤더 제거
+						const payload = data.subarray(LAT_HEADER_LEN);
+						encodedFrame.data = sliceArrayBuffer(payload.buffer, payload.byteOffset, payload.byteLength);
 					}
-
-					// 디코더에 넘기기 전에 헤더 제거
-					const payload = data.subarray(LAT_HEADER_LEN);
-					encodedFrame.data = sliceArrayBuffer(payload.buffer, payload.byteOffset, payload.byteLength);
 				}
+			} catch (e) {
+				logger?.warn?.('[latency] transform error:', e);
 			}
-		} catch (e) {
-			logger?.warn?.('[latency] transform error:', e);
-		}
 
-		controller.enqueue(encodedFrame);
+			controller.enqueue(encodedFrame);
 		}
 	});
 
@@ -512,7 +512,7 @@ export default class RoomClient {
 
 		// eslint-disable-next-line no-unused-vars
 		// WebSocket으로 request가 도착할 때마다 등록해둔 콜백이 매번 실행되는 구조
-		this._protoo.on('request', async (request, accept, reject) => { 
+		this._protoo.on('request', async (request, accept, reject) => {
 			logger.debug(
 				'proto "request" event [method:%s, data:%o]',
 				request.method,
@@ -554,9 +554,9 @@ export default class RoomClient {
 								// webcam streams from the same remote peer.
 								streamId: `${peerId}-${appData.source === 'screensharing' ? 'screensharing' : 'audio-video'}`,
 								onRtpReceiver: (rtpReceiver) => {
-								// video만 측정하고 싶다면: if (kind !== 'video') return;
+									// video만 측정하고 싶다면: if (kind !== 'video') return;
 									setupReceiverLatency(rtpReceiver, {
-										logger, 
+										logger,
 										logEvery: 60,
 										onLatency: (m) => {
 											const msg = JSON.stringify({
@@ -1092,7 +1092,7 @@ export default class RoomClient {
 				const stream = await navigator.mediaDevices.getUserMedia({
 					audio: true,
 				});
-			
+
 				track = stream.getAudioTracks()[0];
 			} else {
 				const stream = await this._getExternalVideoStream();
@@ -1109,9 +1109,9 @@ export default class RoomClient {
 				opusNack: true,
 			};
 
-			const headerExtensionOptions = {
-				absCaptureTime: true,
-			};
+			// const headerExtensionOptions = {
+			// 	absCaptureTime: true,
+			// };
 
 			if (this._forcePCMA) {
 				codec = this._mediasoupDevice.rtpCapabilities.codecs.find(
@@ -1128,10 +1128,11 @@ export default class RoomClient {
 			this._micProducer = await this._sendTransport.produce({
 				track,
 				codecOptions,
-				headerExtensionOptions,
+				//headerExtensionOptions,
 				codec,
 				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
+					setupSenderTimestamp(rtpSender, { logger });
+				},
 				appData: {
 					source: 'audio',
 				},
@@ -1164,7 +1165,7 @@ export default class RoomClient {
 					})
 				);
 
-				this.disableMic().catch(() => {});
+				this.disableMic().catch(() => { });
 			});
 		} catch (error) {
 			logger.error('enableMic() | failed:%o', error);
@@ -1221,8 +1222,33 @@ export default class RoomClient {
 	}
 
 	async enableWebcam() {
+
+		if (!window.__pcOfferDebugInstalled) {
+			window.__pcOfferDebugInstalled = true;
+
+			const origCreateOffer = RTCPeerConnection.prototype.createOffer;
+			RTCPeerConnection.prototype.createOffer = async function (...args) {
+				console.log('[PC DEBUG] createOffer() called', this);
+				const offer = await origCreateOffer.apply(this, args);
+				console.log('[PC DEBUG] createOffer SDP:\n', offer.sdp);
+				return offer;
+			};
+
+			const origSetLocalDescription =
+				RTCPeerConnection.prototype.setLocalDescription;
+			RTCPeerConnection.prototype.setLocalDescription = async function (...args) {
+				const desc = args[0];
+				console.log(
+					'[PC DEBUG] setLocalDescription type=',
+					desc?.type,
+					'\nSDP:\n',
+					desc?.sdp
+				);
+				return await origSetLocalDescription.apply(this, args);
+			};
+		}
 		if (!this._produce) return; // yun
-		
+
 		logger.debug('enableWebcam()');
 
 		if (this._webcamProducer) {
@@ -1263,7 +1289,7 @@ export default class RoomClient {
 						...WEBCAM_VIDEO_CONSTRAINS[resolution],
 					},
 				});
-			
+
 				track = stream.getVideoTracks()[0];
 			} else {
 				device = { label: 'external video' };
@@ -1280,9 +1306,9 @@ export default class RoomClient {
 				videoGoogleStartBitrate: 1000,
 			};
 
-			const headerExtensionOptions = {
-				absCaptureTime: true,
-			};
+			// const headerExtensionOptions = {
+			// 	//absCaptureTime: true,
+			// };
 
 			if (this._forceVP8) {
 				codec = this._mediasoupDevice.rtpCapabilities.codecs.find(
@@ -1345,7 +1371,8 @@ export default class RoomClient {
 						{
 							scaleResolutionDownBy: 1,
 							maxBitrate: 5000000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						},
 					];
 
@@ -1353,7 +1380,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 2,
 							maxBitrate: 1000000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						});
 					}
 
@@ -1361,7 +1389,8 @@ export default class RoomClient {
 						encodings.unshift({
 							scaleResolutionDownBy: 4,
 							maxBitrate: 500000,
-							scalabilityMode: this._webcamScalabilityMode || 'L1T3',
+							scalabilityMode: 'L1T1',
+							//scalabilityMode: this._webcamScalabilityMode || 'L1T3',
 						});
 					}
 				}
@@ -1380,10 +1409,11 @@ export default class RoomClient {
 				track,
 				encodings,
 				codecOptions,
-				headerExtensionOptions,
+				// headerExtensionOptions, // yeon
 				codec,
 				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
+					setupSenderTimestamp(rtpSender, { logger });
+				},
 				appData: {
 					source: 'video',
 				},
@@ -1418,7 +1448,7 @@ export default class RoomClient {
 					})
 				);
 
-				this.disableWebcam().catch(() => {});
+				this.disableWebcam().catch(() => { });
 			});
 		} catch (error) {
 			logger.error('enableWebcam() | failed:%o', error);
@@ -1789,7 +1819,7 @@ export default class RoomClient {
 					})
 				);
 
-				this.disableShare().catch(() => {});
+				this.disableShare().catch(() => { });
 			});
 		} catch (error) {
 			logger.error('enableShare() | failed:%o', error);
