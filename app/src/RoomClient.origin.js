@@ -963,9 +963,6 @@ export default class RoomClient {
 				codecOptions,
 				//headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'audio',
 				},
@@ -1244,9 +1241,6 @@ export default class RoomClient {
 				codecOptions,
 				// headerExtensionOptions, // yeon
 				codec,
-				onRtpSender: (rtpSender) => {
-					setupSenderTimestamp(rtpSender, { logger });
-				},
 				appData: {
 					source: 'video',
 				},
