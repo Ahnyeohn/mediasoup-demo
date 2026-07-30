@@ -963,11 +963,11 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
-				appData: {
-					source: 'audio',
-				},
+				// onRtpSender: (rtpSender) => {
+    			// 				setupSenderTimestamp(rtpSender, { logger });},
+				// appData: {
+				// 	source: 'audio',
+				// },
 			});
 
 			if (this._e2eKey && e2e.isSupported()) {
@@ -1215,11 +1215,11 @@ export default class RoomClient {
 				codecOptions,
 				headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
-				appData: {
-					source: 'video',
-				},
+				// onRtpSender: (rtpSender) => {
+    			// 				setupSenderTimestamp(rtpSender, { logger });},
+				// appData: {
+				// 	source: 'video',
+				// },
 			});
 
 			if (this._e2eKey && e2e.isSupported()) {
