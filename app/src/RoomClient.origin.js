@@ -943,7 +943,7 @@ export default class RoomClient {
 			};
 
 			const headerExtensionOptions = {
-				absCaptureTime: true,
+				//absCaptureTime: true,
 			};
 
 			if (this._forcePCMA) {
@@ -961,13 +961,8 @@ export default class RoomClient {
 			this._micProducer = await this._sendTransport.produce({
 				track,
 				codecOptions,
-				headerExtensionOptions,
+				//headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
-				appData: {
-					source: 'audio',
-				},
 			});
 
 			if (this._e2eKey && e2e.isSupported()) {
@@ -1114,7 +1109,7 @@ export default class RoomClient {
 			};
 
 			const headerExtensionOptions = {
-				absCaptureTime: true,
+				//absCaptureTime: true,
 			};
 
 			if (this._forceVP8) {
@@ -1213,13 +1208,8 @@ export default class RoomClient {
 				track,
 				encodings,
 				codecOptions,
-				headerExtensionOptions,
+				//headerExtensionOptions,
 				codec,
-				onRtpSender: (rtpSender) => {
-    							setupSenderTimestamp(rtpSender, { logger });},
-				appData: {
-					source: 'video',
-				},
 			});
 
 			if (this._e2eKey && e2e.isSupported()) {
