@@ -327,15 +327,20 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						consumer = await transport.consume<ConsumerAppData>({
 							producerId: producer.id,
 							rtpCapabilities: this.#rtpCapabilities!,
-							// Enable NACK for video and OPUS audio.
 							enableRtx: true,
+							enableFlexFec: true, // yeon: fec
 							paused: true,
 							ignoreDtx: true,
 							appData: {
 								peerId: producer.appData.peerId,
-								source: producer.appData.source,
-							},
+								source: producer.appData.source
+							}
 						});
+
+						this.#logger.warn(
+							'consume() | [FlexFEC] consumer.rtpParameters:%o',
+							consumer.rtpParameters
+						);
 					} catch (error) {
 						this.#logger.warn(
 							`consume() | transport.consume() failed: ${error}`
