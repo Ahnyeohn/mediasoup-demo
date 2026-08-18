@@ -351,7 +351,13 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						return;
 					}
 
+					// const wasViewer = this.#consumers.size > 0;
+
 					this.#consumers.set(consumer.id, consumer);
+
+					// if (!wasViewer) {
+					// 	this.emit('viewer-state-changed', true);
+					// }
 
 					this.handleConsumer(consumer);
 
@@ -376,9 +382,9 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						await consumer.resume();
 
 						// yeon: 실제 SFU -> Viewer 비디오 비트레이트 측정 시작.
-						// if (i === 0) {
-						// 	this.startConsumerBitrateMonitor(consumer, i);
-						// }
+						if (i === 0) {
+							this.startConsumerBitrateMonitor(consumer, i);
+						}
 
 						resolve();
 					} catch (error) {
@@ -1181,7 +1187,17 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 	): void {
 		consumer.observer.on('close', () => {
 			this.stopConsumerBitrateMonitor(consumer.id);
+
+			// yeon: viewer count
+			//const wasViewer = this.#consumers.size > 0;
+
 			this.#consumers.delete(consumer.id);
+
+			// yeon: viewer count
+			// if (wasViewer && this.#consumers.size === 0) {
+			// 	this.emit('viewer-state-changed', false);
+			// }
+
 		});
 
 		consumer.on('producerclose', () => {
