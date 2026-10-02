@@ -543,39 +543,102 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 				usePipeTransports
 			);
 
-			const { worker: producerWorker, webRtcServer: producerWebRtcServer } =
-				this.getNextWorkerAndWebRtcServer();
+		const NUM_CONSUMER_ROUTERS = 2;
 
-			const { worker: consumerWorker, webRtcServer: consumerWebRtcServer } =
-				usePipeTransports
-					? this.getNextWorkerAndWebRtcServer()
-					: {
-							worker: producerWorker,
-							webRtcServer: producerWebRtcServer,
-						};
+		if (
+			usePipeTransports &&
+			this.#config.mediasoup.numWorkers <
+				1 + NUM_CONSUMER_ROUTERS
+		) {
+			throw new InvalidStateError(
+				`at least ${1 + NUM_CONSUMER_ROUTERS} mediasoup Workers are needed`
+			);
+		}
 
-			const { mediaCodecs } = this.#config.mediasoup.routerOptions;
+		const {
+			worker: producerWorker,
+			webRtcServer: producerWebRtcServer
+		} = this.getNextWorkerAndWebRtcServer();
 
-			const producerRouter = await producerWorker.createRouter({
-				mediaCodecs,
+		const { mediaCodecs } =
+			this.#config.mediasoup.routerOptions;
+
+		const producerRouter =
+			await producerWorker.createRouter({
+				mediaCodecs
 			});
 
-			const consumerRouter = usePipeTransports
-				? await consumerWorker.createRouter({
-						mediaCodecs,
-					})
-				: producerRouter;
+		let consumerRouters:
+			mediasoupTypes.Router[] = [];
 
-			const room = await Room.create({
-				roomId,
-				consumerReplicas,
-				usePipeTransports,
-				config: this.#config,
-				producerRouter,
-				consumerRouter,
-				producerWebRtcServer,
-				consumerWebRtcServer,
-			});
+		let consumerWebRtcServers:
+			mediasoupTypes.WebRtcServer[] = [];
+
+		if (usePipeTransports) {
+			const consumerPairs =
+				Array.from(
+					{ length: NUM_CONSUMER_ROUTERS },
+					() =>
+						this.getNextWorkerAndWebRtcServer()
+				);
+
+			consumerRouters =
+				await Promise.all(
+					consumerPairs.map(({ worker }) =>
+						worker.createRouter({
+							mediaCodecs
+						})
+					)
+				);
+
+			consumerWebRtcServers =
+				consumerPairs.map(
+					({ webRtcServer }) => webRtcServer
+				);
+
+			for (
+				let i = 0;
+				i < consumerPairs.length;
+				++i
+			) {
+				const pair = consumerPairs[i];
+				const router = consumerRouters[i];
+
+				if (!pair || !router) {
+					throw new Error(
+						`failed to create consumer shard ${i}`
+					);
+				}
+
+				logger.info(
+					'consumer shard created [shard:%d, workerPid:%d, routerId:%s]',
+					i,
+					pair.worker.pid,
+					router.id
+				);
+			}
+		} else {
+			consumerRouters = [
+				producerRouter
+			];
+
+			consumerWebRtcServers = [
+				producerWebRtcServer
+			];
+		}
+
+		const room = await Room.create({
+			roomId,
+			consumerReplicas,
+			usePipeTransports,
+			config: this.#config,
+
+			producerRouter,
+			consumerRouters,
+
+			producerWebRtcServer,
+			consumerWebRtcServers
+		});
 
 			roomData.room = room;
 			this.handleRoom(room);

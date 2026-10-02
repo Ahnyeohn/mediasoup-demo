@@ -42,10 +42,12 @@ export type RoomCreateOptions = {
 	consumerReplicas: number;
 	usePipeTransports: boolean;
 	config: ServerConfig;
+
 	producerRouter: mediasoupTypes.Router;
-	consumerRouter: mediasoupTypes.Router;
+	consumerRouters: mediasoupTypes.Router[];
+
 	producerWebRtcServer: mediasoupTypes.WebRtcServer;
-	consumerWebRtcServer: mediasoupTypes.WebRtcServer;
+	consumerWebRtcServers: mediasoupTypes.WebRtcServer[];
 };
 
 type RoomConstructorOptions = {
@@ -54,10 +56,13 @@ type RoomConstructorOptions = {
 	consumerReplicas: number;
 	usePipeTransports: boolean;
 	config: ServerConfig;
+
 	producerRouter: mediasoupTypes.Router;
-	consumerRouter: mediasoupTypes.Router;
+	consumerRouters: mediasoupTypes.Router[];
+
 	producerWebRtcServer: mediasoupTypes.WebRtcServer;
-	consumerWebRtcServer: mediasoupTypes.WebRtcServer;
+	consumerWebRtcServers: mediasoupTypes.WebRtcServer[];
+
 	audioLevelObserver: mediasoupTypes.AudioLevelObserver;
 	activeSpeakerObserver: mediasoupTypes.ActiveSpeakerObserver;
 	protooRoom: protooTypes.Room;
@@ -109,9 +114,14 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	readonly #usePipeTransports: boolean;
 	readonly #config: ServerConfig;
 	readonly #producerRouter: mediasoupTypes.Router;
-	readonly #consumerRouter: mediasoupTypes.Router;
+	readonly #consumerRouters: mediasoupTypes.Router[];
+
 	readonly #producerWebRtcServer: mediasoupTypes.WebRtcServer;
-	readonly #consumerWebRtcServer: mediasoupTypes.WebRtcServer;
+	readonly #consumerWebRtcServers: mediasoupTypes.WebRtcServer[];
+
+	readonly #peerConsumerRouterIndex = new WeakMap<Peer, number>(); // yun
+	#nextConsumerRouterIndex = 0; // yun
+
 	readonly #audioLevelObserver: mediasoupTypes.AudioLevelObserver;
 	readonly #activeSpeakerObserver: mediasoupTypes.ActiveSpeakerObserver;
 	readonly #observedProducers: Map<
@@ -182,7 +192,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		if (this.#usePipeTransports) {
 			await (this.#producerRouter as any).pipeToRouter({
 				producerId: producer.id,
-				router: this.#consumerRouter,
+				router: this.getPrimaryConsumerRouter(), // yun: for more SFU workers
 			});
 		}
 
@@ -207,9 +217,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		usePipeTransports,
 		config,
 		producerRouter,
-		consumerRouter,
+		consumerRouters,
 		producerWebRtcServer,
-		consumerWebRtcServer,
+		consumerWebRtcServers,
 	}: RoomCreateOptions): Promise<Room> {
 		staticLogger.debug(
 			'create() [roomId:%o, usePipeTransports:%o]',
@@ -230,10 +240,17 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 		const protooRoom = new protoo.Room();
 
+		const primaryConsumerRouter = consumerRouters[0];
+		if (!primaryConsumerRouter) {
+			throw new Error(
+					'Room requires at least one consumer Router'
+			);
+		}
+
 		const bot = await Bot.create({
 			usePipeTransports,
 			producerRouter,
-			consumerRouter,
+			consumerRouter: primaryConsumerRouter,
 		});
 
 		const room = new Room({
@@ -243,9 +260,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			usePipeTransports,
 			config,
 			producerRouter,
-			consumerRouter,
+			consumerRouters,
 			producerWebRtcServer,
-			consumerWebRtcServer,
+			consumerWebRtcServers,
 			audioLevelObserver,
 			activeSpeakerObserver,
 			protooRoom,
@@ -265,7 +282,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 	// yeon
 	getRouter(role: 'producer' | 'consumer' = 'producer'): mediasoupTypes.Router {
-		return role === 'consumer' ? this.#consumerRouter : this.#producerRouter;
+//		return role === 'consumer' ? this.#consumerRouter : this.#producerRouter;
+		return role === 'consumer' ? this.getPrimaryConsumerRouter() : this.#producerRouter; // yun: for more SFU workers
 	}
 
 	// yeon
@@ -280,9 +298,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		usePipeTransports,
 		config,
 		producerRouter,
-		consumerRouter,
+		consumerRouters,
 		producerWebRtcServer,
-		consumerWebRtcServer,
+		consumerWebRtcServers,
 		audioLevelObserver,
 		activeSpeakerObserver,
 		protooRoom,
@@ -299,9 +317,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		this.#usePipeTransports = usePipeTransports;
 		this.#config = config;
 		this.#producerRouter = producerRouter;
-		this.#consumerRouter = consumerRouter;
+		this.#consumerRouters = consumerRouters;
 		this.#producerWebRtcServer = producerWebRtcServer;
-		this.#consumerWebRtcServer = consumerWebRtcServer;
+		this.#consumerWebRtcServers = consumerWebRtcServers;
 		this.#audioLevelObserver = audioLevelObserver;
 		this.#activeSpeakerObserver = activeSpeakerObserver;
 		this.#protooRoom = protooRoom;
@@ -309,11 +327,54 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		this.#createdAt = new Date();
 
 		this.handleProducerRouter();
-		this.handleConsumerRouter();
+		this.handleConsumerRouters(); // yun: for more SFU workers
 		this.handleProducerWebRtcServer();
 		this.handleConsumerWebRtcServer();
 		this.handleAudioLevelObserver();
 		this.handleActiveSpeakerObserver();
+	}
+
+	// yun: more workers
+	private getConsumerShard(peer: Peer): {
+		router: mediasoupTypes.Router;
+		webRtcServer: mediasoupTypes.WebRtcServer;
+		index: number;
+	} {
+		const index = this.#peerConsumerRouterIndex.get(peer) ?? 0;
+
+		const router = this.#consumerRouters[index];
+		const webRtcServer = this.#consumerWebRtcServers[index];
+
+		if (!router || !webRtcServer) {
+			throw new Error(
+					`invalid consumer shared [index:${index}]`
+			);
+		}
+
+		return { router, webRtcServer, index };
+	}
+
+	private getPrimaryConsumerRouter(): mediasoupTypes.Router {
+		const router = this.#consumerRouters[0];
+
+		if (!router) {
+			throw new Error('no consumer Router available');
+		}
+
+		return router;
+	}
+
+	private getPrimaryConsumerWebRtcServer(): mediasoupTypes.WebRtcServer {
+		const webRtcServer =
+			this.#consumerWebRtcServers[0];
+
+		if (!webRtcServer) {
+			throw new Error(
+				'no consumer WebRtcServer available'
+			);
+		}
+
+		return webRtcServer;
 	}
 
 	get id(): RoomId {
@@ -349,7 +410,10 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 		this.#producerRouter.close();
 
-		this.#consumerRouter.close();
+//		this.#consumerRouter.close();
+		for (const router of this.#consumerRouters) { // yun: for more SFU workers
+			router.close();
+		}
 
 		this.emit('closed');
 	}
@@ -396,6 +460,13 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 		const protooPeer = this.#protooRoom.createPeer(peerId, protooTransport);
 		const peer = Peer.create({ peerId, protooPeer, remoteAddress });
+
+		// yun: more SFU workers
+		const consumerRouterIndex = this.#nextConsumerRouterIndex;
+
+		this.#nextConsumerRouterIndex = (this.#nextConsumerRouterIndex + 1) % this.#consumerRouters.length;
+		this.#peerConsumerRouterIndex.set(peer, consumerRouterIndex);
+		this.#logger.info('assigned peer to consumer shared [peerId:%o, shared:%d]', peer.id, consumerRouterIndex);
 
 		// NOTE: The Peer is not yet joined. It will once it sends 'join' request.
 		this.#joiningPeers.set(peer.id, peer);
@@ -645,7 +716,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		peer.on('get-router-rtp-capabilities', callback => {
-			callback(this.#consumerRouter.rtpCapabilities);
+//			callback(this.#consumerRouter.rtpCapabilities);
+			callback(this.getPrimaryConsumerRouter().rtpCapabilities);
 		});
 
 		peer.on(
@@ -665,8 +737,19 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 						}
 
 						case 'consumer': {
-							mediasoupRouter = this.#consumerRouter;
-							mediasoupWebRtcServer = this.#consumerWebRtcServer;
+							const { router, webRtcServer, index } = this.getConsumerShard(peer);
+
+//							mediasoupRouter = this.#consumerRouter;
+//							mediasoupWebRtcServer = this.#consumerWebRtcServer;
+							mediasoupRouter = router;
+							mediasoupWebRtcServer = webRtcServer;
+
+							this.#logger.info(
+									'creating consumer transport [peerId: %o, shard:%d, routerId: %o]',
+									peer.id,
+									index,
+									router.id
+									);
 
 							break;
 						}
@@ -710,11 +793,15 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 		// eslint-disable-next-line @typescript-eslint/no-misused-promises
 		peer.on('new-producer', async ({ producer }) => {
-			if (this.#usePipeTransports) {
-				await this.#producerRouter.pipeToRouter({
-					producerId: producer.id,
-					router: this.#consumerRouter,
-				});
+			if (this.#usePipeTransports) { // yun: for more SFU workers
+				await Promise.all(
+					this.#consumerRouters.map(router =>
+						this.#producerRouter.pipeToRouter({
+							producerId: producer.id,
+							router
+						})
+					)
+				);
 			}
 
 			// yeon
@@ -746,11 +833,15 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 			switch (channel) {
 				case 'chat': {
-					if (this.#usePipeTransports) {
-						await this.#producerRouter.pipeToRouter({
-							dataProducerId: dataProducer.id,
-							router: this.#consumerRouter,
-						});
+					if (this.#usePipeTransports) { // yun: for more SFU workers
+						await Promise.all(
+							this.#consumerRouters.map(router =>
+								this.#producerRouter.pipeToRouter({
+									dataProducerId: dataProducer.id,
+									router
+								})
+							)
+						);
 					}
 
 					const otherPeers = this.getOtherPeers(peer);
@@ -772,17 +863,19 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			}
 		});
 
-		peer.on('get-can-consume', ({ producerId, rtpCapabilities }, callback) => {
-			if (rtpCapabilities) {
-				callback(
-					this.#consumerRouter.canConsume({
+		peer.on('get-can-consume', ({ producerId, rtpCapabilities }, callback) => { // yun: for more SFU workers
+			if (!rtpCapabilities) {
+				callback(false);
+				return;
+			}
+
+			const { router } = this.getConsumerShard(peer);
+
+			callback(router.canConsume({
 						producerId,
 						rtpCapabilities,
-					})
-				);
-			} else {
-				callback(false);
-			}
+				})
+			);
 		});
 
 		peer.on('display-name-changed', ({ displayName, oldDisplayName }) => {
@@ -842,7 +935,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 
 		broadcasterPeer.on('get-router-rtp-capabilities', callback => {
-			callback(this.#consumerRouter.rtpCapabilities);
+//			callback(this.#consumerRouter.rtpCapabilities);
+			callback(this.getPrimaryConsumerRouter().rtpCapabilities);
 		});
 
 		broadcasterPeer.on(
@@ -860,7 +954,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 						}
 
 						case 'consumer': {
-							mediasoupRouter = this.#consumerRouter;
+							mediasoupRouter = this.getPrimaryConsumerRouter(); // yun: for more SFU workers
 
 							break;
 						}
@@ -887,11 +981,15 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 
 		// eslint-disable-next-line @typescript-eslint/no-misused-promises
 		broadcasterPeer.on('new-producer', async ({ producer }) => {
-			if (this.#usePipeTransports) {
-				await this.#producerRouter.pipeToRouter({
-					producerId: producer.id,
-					router: this.#consumerRouter,
-				});
+			if (this.#usePipeTransports) { // yun: for more SFU workers
+				await Promise.all(
+					this.#consumerRouters.map(router =>
+						this.#producerRouter.pipeToRouter({
+							producerId: producer.id,
+							router
+						})
+					)
+				);
 			}
 
 			// yeon
@@ -923,7 +1021,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			({ producerId, rtpCapabilities }, callback) => {
 				if (rtpCapabilities) {
 					callback(
-						this.#consumerRouter.canConsume({
+						this.getPrimaryConsumerRouter().canConsume({
 							producerId,
 							rtpCapabilities,
 						})
@@ -1009,10 +1107,12 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		});
 	}
 
-	private handleConsumerRouter(): void {
-		this.#consumerRouter.observer.on('close', () => {
-			this.close();
-		});
+	private handleConsumerRouters(): void {
+		for (const router of this.#consumerRouters) {
+			router.observer.on('close', () => {
+				this.close();
+			});
+		}
 	}
 
 	private handleProducerWebRtcServer(): void {
@@ -1074,7 +1174,8 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		switch (name) {
 			case 'getRouterRtpCapabilities': {
 				accept({
-					routerRtpCapabilities: this.#consumerRouter.rtpCapabilities,
+//					routerRtpCapabilities: this.#consumerRouter.rtpCapabilities,
+					routerRtpCapabilities: this.getPrimaryConsumerRouter().rtpCapabilities,
 				});
 
 				break;
