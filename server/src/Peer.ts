@@ -381,11 +381,24 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						// associate it.
 						await consumer.resume();
 
+						//yeon: late-join viewer keyframe request
+						if (consumer.kind === 'video') {
+							try {
+								await consumer.requestKeyFrame();
+
+							} catch (error) {
+								this.#logger.warn(
+									'[KEYFRAME-TEST] requestKeyFrame() failed consumerId=%s error=%o',
+									consumer.id,
+									error
+								);
+							}
+						}
+
 						// yeon: 실제 SFU -> Viewer 비디오 비트레이트 측정 시작.
 						if (i === 0) {
 							this.startConsumerBitrateMonitor(consumer, i);
 						}
-
 						resolve();
 					} catch (error) {
 						this.#logger.warn(`consume() | failed: ${error}`);
@@ -1128,33 +1141,33 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 					const bitrateBps = Number(outboundStat.bitrate ?? 0);
 					const currentLayers = consumer.currentLayers;
 
-					this.#logger.warn(
-						'[viewer-bitrate] ' +
-						'viewerPeerId=%s ' +
-						'consumerId=%s ' +
-						'producerId=%s ' +
-						'replicaIndex=%d ' +
-						'spatialLayer=%d ' +
-						'temporalLayer=%d ' +
-						'bitrateBps=%d ' +
-						'bitrateKbps=%s ' +
-						'bitrateMbps=%s ' +
-						'packetCount=%d ' +
-						'byteCount=%d ' +
-						'packetsRetransmitted=%d',
-						this.#peerId,
-						consumer.id,
-						consumer.producerId,
-						replicaIndex,
-						currentLayers?.spatialLayer ?? -1,
-						currentLayers?.temporalLayer ?? -1,
-						bitrateBps,
-						(bitrateBps / 1000).toFixed(1),
-						(bitrateBps / 1_000_000).toFixed(3),
-						Number(outboundStat.packetCount ?? 0),
-						Number(outboundStat.byteCount ?? 0),
-						Number(outboundStat.packetsRetransmitted ?? 0)
-					);
+					// this.#logger.warn(
+					// 	'[viewer-bitrate] ' +
+					// 	'viewerPeerId=%s ' +
+					// 	'consumerId=%s ' +
+					// 	'producerId=%s ' +
+					// 	'replicaIndex=%d ' +
+					// 	'spatialLayer=%d ' +
+					// 	'temporalLayer=%d ' +
+					// 	'bitrateBps=%d ' +
+					// 	'bitrateKbps=%s ' +
+					// 	'bitrateMbps=%s ' +
+					// 	'packetCount=%d ' +
+					// 	'byteCount=%d ' +
+					// 	'packetsRetransmitted=%d',
+					// 	this.#peerId,
+					// 	consumer.id,
+					// 	consumer.producerId,
+					// 	replicaIndex,
+					// 	currentLayers?.spatialLayer ?? -1,
+					// 	currentLayers?.temporalLayer ?? -1,
+					// 	bitrateBps,
+					// 	(bitrateBps / 1000).toFixed(1),
+					// 	(bitrateBps / 1_000_000).toFixed(3),
+					// 	Number(outboundStat.packetCount ?? 0),
+					// 	Number(outboundStat.byteCount ?? 0),
+					// 	Number(outboundStat.packetsRetransmitted ?? 0)
+					// );
 				} catch (error) {
 					this.#logger.warn(
 						'[viewer-bitrate] consumer.getStats() failed ' +
