@@ -31,6 +31,128 @@ const EXTERNAL_VIDEO_SRC = '/videos/video-audio-stereo.mp4';
 
 const logger = new Logger('RoomClient');
 
+// yeon: frame metadata prefix
+// [0..3]   MAGIC
+// [4..7]   FrameID
+// [8..11]  Encoded Frame Size (bytes)
+const FRAME_META_MAGIC = 0x46534D31; // 임의 magic 값
+const FRAME_META_HEADER_LEN = 12;
+
+let frameId = 0;
+
+function setupSenderFrameMetadata(rtpSender, { logger } = {}) {
+	if (!rtpSender)
+		return;
+
+	if (typeof rtpSender.createEncodedStreams !== 'function') {
+		logger?.warn?.(
+			'[frame-meta] rtpSender.createEncodedStreams() not supported'
+		);
+
+		return;
+	}
+
+	let streams;
+
+	try {
+		streams = rtpSender.createEncodedStreams();
+	}
+	catch (error) {
+		logger?.warn?.(
+			'[frame-meta] sender createEncodedStreams() failed:%o',
+			error
+		);
+
+		return;
+	}
+
+	const { readable, writable } = streams;
+
+	const transformer = new TransformStream({
+		transform: (encodedFrame, controller) => {
+			try {
+
+				const meta = encodedFrame.getMetadata();
+
+				console.log(
+					'[FRAME-GROUP-TEST]',
+					'localId=', frameId,
+					'frameTs=', encodedFrame.timestamp,
+					'metaFrameId=', meta.frameId,
+					'rtpTs=', meta.rtpTimestamp,
+					'ssrc=', meta.synchronizationSource,
+					'spatialIndex=', meta.spatialIndex,
+					'width=', meta.width,
+					'height=', meta.height,
+					'size=', encodedFrame.data.byteLength
+				);
+				/*
+				 * 여기의 encodedFrame.data는 packetization 전의
+				 * encoded video frame 전체입니다.
+				 *
+				 * Simulcast인 경우 transform에 들어오는 각 encodedFrame은
+				 * 각 encoding(layer)에 해당하는 개별 encoded frame입니다.
+				 */
+				const payload = new Uint8Array(encodedFrame.data);
+
+				/*
+				 * 중요:
+				 * prefix를 붙이기 전 크기를 frameSize로 저장합니다.
+				 */
+				const frameSizeBytes = payload.byteLength;
+
+				frameId += 1;
+
+				const header = new ArrayBuffer(FRAME_META_HEADER_LEN);
+				const dv = new DataView(header);
+
+				dv.setUint32(0, FRAME_META_MAGIC, true);
+				dv.setUint32(4, frameId, true);
+				dv.setUint32(8, frameSizeBytes, true);
+
+				// [custom prefix][original encoded frame]
+				const out =
+					new Uint8Array(FRAME_META_HEADER_LEN + frameSizeBytes);
+
+				out.set(new Uint8Array(header), 0);
+				out.set(payload, FRAME_META_HEADER_LEN);
+
+				encodedFrame.data = out.buffer;
+
+				if (frameId % 30 === 0) {
+					logger?.debug?.(
+						'[frame-meta] frameId=%d, frameSize=%d bytes',
+						frameId,
+						frameSizeBytes
+					);
+				}
+			}
+			catch (error) {
+				logger?.warn?.(
+					'[frame-meta] sender transform failed:%o',
+					error
+				);
+			}
+
+			controller.enqueue(encodedFrame);
+		}
+	});
+
+	readable
+		.pipeThrough(transformer)
+		.pipeTo(writable)
+		.catch((error) => {
+			logger?.warn?.(
+				'[frame-meta] sender pipeTo() failed:%o',
+				error
+			);
+		});
+
+	logger?.debug?.(
+		'[frame-meta] sender frame metadata transform installed'
+	);
+}
+
 let store;
 
 export default class RoomClient {
@@ -1241,6 +1363,10 @@ export default class RoomClient {
 				codecOptions,
 				// headerExtensionOptions, // yeon
 				codec,
+				// yeon: encoded frame에 frame metadata prefix 추가
+				onRtpSender: (rtpSender) => {
+					setupSenderFrameMetadata(rtpSender, { logger });
+				},
 				appData: {
 					source: 'video',
 				},
