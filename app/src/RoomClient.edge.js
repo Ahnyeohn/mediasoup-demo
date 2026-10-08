@@ -2556,14 +2556,14 @@ export default class RoomClient {
 			//
 			// Just get access to the mic and DO NOT close the mic track for a while.
 			// Super hack!
-			const stream = await navigator.mediaDevices.getUserMedia({
-				audio: true,
-			});
-			const audioTrack = stream.getAudioTracks()[0];
+			// const stream = await navigator.mediaDevices.getUserMedia({
+			// 	audio: true,
+			// });
+			// const audioTrack = stream.getAudioTracks()[0];
 
-			audioTrack.enabled = false;
+			// audioTrack.enabled = false;
 
-			setTimeout(() => audioTrack.stop(), 120000);
+			// setTimeout(() => audioTrack.stop(), 120000);
 			// Create mediasoup Transport for sending (unless we don't want to produce).
 			if (this._produce) {
 				const transportInfo = await this._protoo.request(

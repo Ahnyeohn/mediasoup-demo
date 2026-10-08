@@ -750,7 +750,6 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			// yeon
 			//Origin->Edge remote pipe (방송/송출 시 자동 복제)
 			// await this.pipeProducerToEdges(producer as mediasoupTypes.Producer<ProducerAppData>);
-
 			const otherPeers = this.getOtherPeers(peer);
 			for (const otherPeer of otherPeers) {
 				void otherPeer.consume({

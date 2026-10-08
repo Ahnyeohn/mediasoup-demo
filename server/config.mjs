@@ -15,6 +15,7 @@ import * as os from 'node:os';
  */
 
 const ANNOUNCED_IP = process.env['MEDIASOUP_ANNOUNCED_ADDRESS'] ?? process.env['SERVER_IP'];
+const SIGNALING_DOMAIN = process.env['SIGNALING_DOMAIN'] ?? ANNOUNCED_IP;
 
 export const config = {
 	/**
@@ -22,7 +23,7 @@ export const config = {
 	 * not matching this domain will be rejected.
 	 */
 	// yeon
-	domain: ANNOUNCED_IP,
+	domain: SIGNALING_DOMAIN,
 	/**
 	 * Signaling settings (Protoo WebSocket server and HTTP API server).
 	 */
@@ -43,7 +44,7 @@ export const config = {
 	 */
 	mediasoup: {
 		// Number of mediasoup workers to launch.
-		numWorkers: Object.keys(os.cpus()).length,
+		numWorkers: Number(process.env['MEDIASOUP_NUM_WORKERS']) || Object.keys(os.cpus()).length,
 		//numWorkers: 1,
 		/**
 		 * mediasoup WorkerSettings.
