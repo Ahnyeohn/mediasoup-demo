@@ -14,8 +14,7 @@ import * as os from 'node:os';
  * @type {import('./src/types.ts').ServerConfig}
  */
 
-/** const ANNOUNCED_IP = process.env['SERVER_IP']; **/
-const ANNOUNCED_IP = process.env.PUBLIC_IP
+const ANNOUNCED_IP = process.env.SERVER_IP
 
 export const config = {
 	/**
