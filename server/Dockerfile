@@ -35,6 +35,8 @@ WORKDIR /work/mediasoup
 # 컨테이너에서는 존재하지 않아 FileNotFoundError
 RUN npm ci && npm run typescript:build && npm run worker:build
 
+ENV MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=true
+
 # 3) mediasoup-demo server 설치 + build
 WORKDIR /work/mediasoup-demo/server
 COPY mediasoup-demo/server .

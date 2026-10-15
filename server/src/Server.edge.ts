@@ -253,6 +253,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 								...(appData ?? {})
 							} as ProducerAppData
 						});
+
 						//서버 객체에 producer를 저장 => 이후 이어지는 요청에서 producer를 꺼내 쓰기 위함 
 						this.#remotePipeProducers.set(producer.id, producer);
 
@@ -263,7 +264,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 						// 그러나, 이후 들어오는 시청자들에게도 consume하기 위한 과정 필요하기 때문에 ExternalProducers 맵에 추가
 						// 근데 익스터널은 모두 __external__이걸로 취급하기 때문에 추후 중복 우려 가능 이후에 수정해야 함
 						room.addExternalProducer(producer);
-						await(room as any).onExternalProducer?.(producer);
+						await (room as any).onExternalProducer?.(producer);
 
 						logger.debug('produce and send json');
 						return this.sendJson(res, 200, { id: producer.id });
@@ -335,7 +336,7 @@ export class Server extends EnhancedEventEmitter<ServerEvents> {
 				// share the same listening port. Hence we increase the port for each
 				// Worker.
 				const clonnedWebRtcServerOptions = clone(webRtcServerOptions);
-				const portIncrement = workersAndWebRtcServers.size - 1;
+				const portIncrement = idx;
 
 				for (const listenInfo of clonnedWebRtcServerOptions.listenInfos) {
 					listenInfo.port! += portIncrement;

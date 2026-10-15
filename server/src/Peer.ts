@@ -277,6 +277,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 		producer: mediasoupTypes.Producer<ProducerAppData>;
 		consumerReplicas: number;
 	}): Promise<void> {
+
 		this.#logger.debug(
 			'consume() [peerId:%o, producerId:%o, source:%o]',
 			producer.appData.peerId,
@@ -382,17 +383,44 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 						await consumer.resume();
 
 						//yeon: late-join viewer keyframe request
-						if (consumer.kind === 'video') {
-							try {
-								await consumer.requestKeyFrame();
+						// if (consumer.kind === 'video') {
+						// 	try {
+						// 		await consumer.requestKeyFrame();
 
-							} catch (error) {
-								this.#logger.warn(
-									'[KEYFRAME-TEST] requestKeyFrame() failed consumerId=%s error=%o',
-									consumer.id,
-									error
+						// 	} catch (error) {
+						// 		this.#logger.warn(
+						// 			'[KEYFRAME-TEST] requestKeyFrame() failed consumerId=%s error=%o',
+						// 			consumer.id,
+						// 			error
+						// 		);
+						// 	}
+						// }
+
+						if (consumer.kind === 'video' && i === 0) {
+							setTimeout(async () => {
+								const stats = await consumer.getStats();
+								const dump = await consumer.dump();
+								console.warn('[EDGE-VIEWER-CONSUMER-STATS]', {
+									consumerId: consumer.id,
+									producerId: consumer.producerId,
+									transportId: transport.id,
+
+									paused: consumer.paused,
+									producerPaused: consumer.producerPaused,
+
+									type: consumer.type,
+									currentLayers: consumer.currentLayers,
+									preferredLayers: consumer.preferredLayers,
+
+									score: consumer.score,
+									stats
+								});
+
+								console.warn(
+									'[EDGE-VIEWER-CONSUMER-DUMP]',
+									dump
 								);
-							}
+							}, 5000);
 						}
 
 						// yeon: 실제 SFU -> Viewer 비디오 비트레이트 측정 시작.
