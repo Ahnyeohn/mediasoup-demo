@@ -30,6 +30,7 @@ import type {
 } from './types';
 
 import { promises as dns } from 'node:dns';
+import * as os from 'node:os';
 
 const staticLogger = new Logger('Room');
 
@@ -265,17 +266,74 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		// Router.ts에 pipeToExRouter 타입이 아직 mediasoupTypes.Router에 반영 안 됐을 수 있으므로 any로 호출
 		const r: any = this.#producerRouter;
 
-		const pipeListenIp = process.env['PIPE_LISTEN_IP'] ?? process.env['SERVER_IP'];
+		//const pipeListenIp = process.env['PIPE_LISTEN_IP'] ?? process.env['SERVER_IP'];
+		const isKubernetes = Boolean(process.env['KUBERNETES_SERVICE_HOST']);
+
+		const flannelIp = isKubernetes
+			? os.networkInterfaces()['flannel.1']
+				?.find(addr => addr.family === 'IPv4')
+				?.address
+			: undefined;
+
+		const pipeListenIp =
+			flannelIp ??
+			process.env['PIPE_LISTEN_IP'] ??
+			process.env['SERVER_IP'];
 		// 각 edge에 대해 pipeToExRouter 호출 (pair 캐시가 있으므로 room/edge당 1쌍 생성 후 재사용)
 		await Promise.allSettled(
-			targets.map(remote =>
-				r.pipeToExRouter({
+
+			targets.map(async remote => {
+
+				const result = await r.pipeToExRouter({
 					producerId: producer.id,
-					remote,          // { url, roomId }
+					remote,
 					keepId: true,
-					listenInfo: { protocol: 'udp', ip: pipeListenIp }, // hard coding, origin 주소 기입
-				})
-			)
+					listenInfo: { protocol: 'udp', ip: pipeListenIp },
+				});
+				const pipeConsumer = result.pipeConsumer;
+
+				console.warn('[PIPE-DEBUG]', {
+					remote: remote.url,
+					producerId: producer.id,
+					producerPaused: producer.paused,
+					pipeConsumerPaused: pipeConsumer?.paused,
+					pipeConsumerProducerPaused: pipeConsumer?.producerPaused,
+				});
+
+				if (producer.kind === 'video') {
+					setTimeout(async () => {
+						console.warn('[RTP-MAP-DEBUG]', {
+							producerId: producer.id,
+							producerType: producer.type,
+							producerEncodings: producer.rtpParameters.encodings,
+							producerScore: producer.score,
+							pipeConsumerType: pipeConsumer?.type,
+							pipeConsumerEncodings: pipeConsumer?.rtpParameters.encodings,
+						});
+
+						console.warn('[PIPE-DEBUG-STATE-5S]', {
+							remote: remote.url,
+							producerId: producer.id,
+							kind: producer.kind,
+							producerPaused: producer.paused,
+							pipeConsumerPaused: pipeConsumer?.paused,
+							pipeConsumerProducerPaused: pipeConsumer?.producerPaused,
+						});
+
+						const pipeStats = await pipeConsumer?.getStats();
+						const producerStats = await producer.getStats();
+
+						console.warn('[PIPE-DEBUG-STATS]', remote.url, pipeStats);
+						console.warn(
+							'[PRODUCER-DEBUG-STATS]',
+							remote.url,
+							producer.kind,
+							producer.id,
+							producerStats
+						);
+					}, 5000);
+				}
+			})
 		);
 	}
 

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # 1) Node.js v22.22.0 설치 (npm까지)
-ENV NODE_VERSION=22.22.0
+ENV NODE_VERSION=22.21.0
 RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz \
   && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
   && rm -f /tmp/node.tar.xz \
@@ -34,6 +34,9 @@ WORKDIR /work/mediasoup
 # 그 안의 설정 파일이 "호스트 경로(/home/n2sl/...)"를 기억하고 있어서 
 # 컨테이너에서는 존재하지 않아 FileNotFoundError
 RUN npm ci && npm run typescript:build && npm run worker:build
+
+# local mediasoup C++ worker를 사용하므로 prebuilt worker 다운로드 금지
+ENV MEDIASOUP_SKIP_WORKER_PREBUILT_DOWNLOAD=true
 
 # 3) mediasoup-demo server 설치 + build
 WORKDIR /work/mediasoup-demo/server
