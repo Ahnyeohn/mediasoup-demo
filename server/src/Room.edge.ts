@@ -149,7 +149,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 		// 기본값(전체 룸 공통)
 		'*': [
 			{ url: 'http://10.20.13.157:4445' }, //hardcoding
-			{ url: 'http://10.20.13.190:4445' }, //hardcoding
+			{ url: 'http://10.20.13.176:4445' }, //hardcoding
 			//{ url: 'http://10.1.2.2:4445' }, //hardcoding
 		],
 

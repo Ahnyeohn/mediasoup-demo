@@ -133,9 +133,9 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	'*': [
 		//{ url: 'http://10.20.13.157:4445' },  //hardcoding
 		//{ url: 'http://10.20.13.186:4445' }, //hardcoding
-		{ url: 'http://10.20.13.190:4445' }, 
-		{ url: 'http://10.20.13.190:4446' }, 
-		{ url: 'http://10.20.13.190:4447' },
+		{ url: 'http://10.20.13.176:4445' }, 
+		{ url: 'http://10.20.13.176:4446' }, 
+		{ url: 'http://10.20.13.176:4447' },
 		/*{ url: 'http://10.1.2.2:4445' }, 
 		{ url: 'http://10.1.2.2:4446' }, 
 		{ url: 'http://10.1.2.2:4447' },*/
