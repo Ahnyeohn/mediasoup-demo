@@ -129,7 +129,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 	// edge SFU의 주소 모두 여기에 적어주면 됨
 	'*': [
 		{ url: 'http://10.20.13.157:4445' },  //hardcoding
-		{ url: 'http://10.20.13.190:4445' }, //hardcoding
+		{ url: 'http://10.20.13.176:4445' }, //hardcoding
 	],
 
 	// 특정 roomId에만 다르게 적용하고 싶으면:
