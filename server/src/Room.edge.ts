@@ -591,7 +591,7 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			const viewerCount = this.#peers.size;
 			
 			this.#logger.warn(
-                '[VIEWER-COUNT] closed peerId=%s viewerCount=%d',
+                '[VIEWER-COUNT] joined peerId=%s viewerCount=%d',
                 peer.id,
                 viewerCount
             );

@@ -690,18 +690,18 @@ export default class RoomClient {
 										// window.VIDEO_STATS = window.VIDEO_STATS || {};
 										// window.VIDEO_STATS[consumer.id] = stats;
 										//youngrhee----------------------------------------------------------------------
-										 if (!this._lastClientReportAt || Date.now() - this._lastClientReportAt >= 5000) {
-											this._lastClientReportAt = Date.now();
-											this._protoo.notify('reportClientStats', {
-												freezeCount: stats.freezeCount,
-												freezeSec: stats.totalFreezesDuration,
-												framesDropped: stats.framesDropped,
-												fps: stats.framesPerSecond ?? stats.decodedFps ?? null,
-												jitterBufferMs: stats.avgJitterBufferDelayMs ?? null,
-												width: stats.frameWidth,
-												height: stats.frameHeight,
-											}).catch(() => {});
-										}
+										//if (!this._lastClientReportAt || Date.now() - this._lastClientReportAt >= 5000) {
+										//	this._lastClientReportAt = Date.now();
+										this._protoo.notify('reportClientStats', {
+											freezeCount: stats.freezeCount,
+											freezeSec: stats.totalFreezesDuration,
+											framesDropped: stats.framesDropped,
+											fps: stats.framesPerSecond ?? stats.decodedFps ?? null,
+											jitterBufferMs: stats.avgJitterBufferDelayMs ?? null,
+											width: stats.frameWidth,
+											height: stats.frameHeight,
+										}).catch(() => {});
+										//}
 
 										console.log(
 											`[video-stats] ` +
