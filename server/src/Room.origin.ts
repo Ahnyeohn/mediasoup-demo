@@ -290,6 +290,15 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 					keepId: true,
 					listenInfo: { protocol: 'udp', ip: pipeListenIp },
 				});
+				// integrated2: cache the local pipe transport for edge-close notifications.
+				// Keep integrated's existing networking and debug behavior.
+				const localPipeTransport = (result as any)?.localPipeTransport as
+					mediasoupTypes.PipeTransport | undefined;
+				if (localPipeTransport) {
+					this.#edgePipeTransports.set(remote.url, localPipeTransport);
+				} else {
+					this.#logger.warn('[PIPE-KEY] missing localPipeTransport [edge:%s]', remote.url);
+				}
 				const pipeConsumer = result.pipeConsumer;
 
 				console.warn('[PIPE-DEBUG]', {
@@ -336,6 +345,74 @@ export class Room extends EnhancedEventEmitter<RoomEvents> {
 			})
 		);
 	}
+
+
+// integrated2 feature: re-pipe a currently active Producer to one Edge.
+// Address selection is the same as integrated's existing pipeProducerToEdges().
+private async pipeProducerToSingleEdge(
+	producer: mediasoupTypes.Producer<ProducerAppData>,
+	edgeUrl: string
+): Promise<void> {
+	const r: any = this.#producerRouter;
+	const isKubernetes = Boolean(process.env['KUBERNETES_SERVICE_HOST']);
+	const flannelIp = isKubernetes
+		? os.networkInterfaces()['flannel.1']
+			?.find(addr => addr.family === 'IPv4')
+			?.address
+		: undefined;
+	const pipeListenIp =
+		flannelIp ?? process.env['PIPE_LISTEN_IP'] ?? process.env['SERVER_IP'];
+
+	try {
+		const result = await r.pipeToExRouter({
+			producerId: producer.id,
+			remote: { url: edgeUrl, roomId: this.#roomId },
+			keepId: true,
+			listenInfo: { protocol: 'udp', ip: pipeListenIp },
+		});
+		const localPipeTransport = result?.localPipeTransport as
+			mediasoupTypes.PipeTransport | undefined;
+		if (localPipeTransport) {
+			this.#edgePipeTransports.set(edgeUrl, localPipeTransport);
+		} else {
+			this.#logger.warn('[PIPE-KEY] missing localPipeTransport during resync [edge:%s]', edgeUrl);
+		}
+		this.#logger.warn('[RESYNC] successfully re-piped producer %s to %s', producer.id, edgeUrl);
+	} catch (error) {
+		this.#logger.error('[RESYNC] failed to re-pipe producer %s to %s: %o', producer.id, edgeUrl, error);
+		throw error;
+	}
+}
+
+// integrated2 feature: let a recreated Edge Room request existing producers.
+public async resyncProducersToEdge(edgeUrl: string): Promise<{ producerCount: number }> {
+	if (typeof edgeUrl !== 'string' || !edgeUrl.trim()) {
+		throw new Error('edgeUrl is required');
+	}
+	const producers = Array.from(this.#observedProducers.values());
+	this.#logger.warn('[RESYNC] roomId=%s edgeUrl=%s producerCount=%d', this.#roomId, edgeUrl, producers.length);
+	const results = await Promise.allSettled(
+		producers.map(producer => this.pipeProducerToSingleEdge(producer, edgeUrl))
+	);
+	const failed = results.filter(result => result.status === 'rejected').length;
+	if (failed) {
+		this.#logger.warn('[RESYNC] failed %d/%d producers [edge:%s]', failed, producers.length, edgeUrl);
+	}
+	return { producerCount: producers.length };
+}
+
+// integrated2 feature: release the origin-side PipeTransport for a closed Edge.
+public closePipeToEdge(edgeUrl: string): { closed: boolean } {
+	const transport = this.#edgePipeTransports.get(edgeUrl);
+	if (!transport) {
+		this.#logger.warn('[EDGE-CLOSED] no pipe transport for edgeUrl=%s', edgeUrl);
+		return { closed: false };
+	}
+	this.#logger.warn('[EDGE-CLOSED] closing pipe transport for edgeUrl=%s', edgeUrl);
+	transport.close();
+	this.#edgePipeTransports.delete(edgeUrl);
+	return { closed: true };
+}
 
 	get roomId(): RoomId {
 		return this.#roomId;

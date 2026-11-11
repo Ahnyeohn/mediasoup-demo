@@ -808,6 +808,7 @@ export class Peer extends EnhancedEventEmitter<PeerEvents> {
 				});
 
 				this.#transports.set(transport.id, transport);
+				transport.appData.peerId = this.#peerId;
 
 				this.handleTransport(transport);
 
